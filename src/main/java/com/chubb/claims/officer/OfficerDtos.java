@@ -1,6 +1,7 @@
 package com.chubb.claims.officer;
 
 import com.chubb.claims.claim.Claim;
+import com.chubb.claims.common.OfficerIds;
 import com.chubb.claims.claim.ClaimStatus;
 import com.chubb.claims.claim.ClaimType;
 import jakarta.validation.constraints.Digits;
@@ -33,15 +34,15 @@ public final class OfficerDtos {
         }
     }
 
-    public record OfficerRequest(@NotBlank @Size(max = 50) String officerId) {
+    public record OfficerRequest(@NotBlank @Size(max = 50) @Pattern(regexp = OfficerIds.NOT_PLACEHOLDER, message = OfficerIds.PLACEHOLDER_MESSAGE) String officerId) {
     }
 
     public record DecisionRequest(
             @NotNull Decision decision,
             @NotBlank @Size(max = 2000) String decisionReason,
             @Digits(integer = 17, fraction = 2) BigDecimal settledAmount,
-            @NotBlank @Pattern(regexp = "[A-Z]{3}", message = "must be a 3-letter upper-case ISO currency code, e.g. SGD") String currency,
-            @NotBlank @Size(max = 50) String decidedByOfficerId) {
+            @NotBlank @Pattern(regexp = "[A-Z]{3}", message = "must be a 3-letter upper-case ISO currency code, e.g. INR") String currency,
+            @NotBlank @Size(max = 50) @Pattern(regexp = OfficerIds.NOT_PLACEHOLDER, message = OfficerIds.PLACEHOLDER_MESSAGE) String decidedByOfficerId) {
     }
 
     public record WorkflowResponse(String claimId, ClaimStatus status, String assignedOfficerId, Instant updatedAt) {

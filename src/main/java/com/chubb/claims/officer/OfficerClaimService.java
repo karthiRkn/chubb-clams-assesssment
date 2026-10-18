@@ -36,16 +36,22 @@ public class OfficerClaimService {
     /** Filtering, sorting and paging all happen in SQL (Specification + Pageable); nothing is filtered in memory. */
     @Transactional(readOnly = true)
     public PageResponse<ClaimSummary> search(ClaimStatus status, String market, ClaimType claimType,
-                                             String assignedOfficerId, int page, int size) {
+                                             String assignedOfficerId, Boolean assigned, int page, int size) {
+        if (Boolean.FALSE.equals(assigned) && assignedOfficerId != null && !assignedOfficerId.isBlank()) {
+            throw ApiException.badRequest("CONFLICTING_FILTERS",
+                    "assigned=false cannot be combined with assignedOfficerId, because an unassigned claim has no officer");
+        }
         PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
-        return PageResponse.from(claims.findAll(ClaimSpecifications.filter(status, market, claimType, assignedOfficerId),
+        return PageResponse.from(claims.findAll(ClaimSpecifications.filter(status, market, claimType, assignedOfficerId, assigned),
                 pageable).map(ClaimSummary::from));
     }
 
     @Transactional
     public WorkflowResponse assign(String claimId, String officerId) {
         Claim claim = claimService.loadForUpdate(claimId);
+        String previous = claim.getAssignedOfficerId();
         claim.assign(officerId);
+        claimService.recordAssignment(claim, previous, null);
         return WorkflowResponse.from(claims.saveAndFlush(claim));
     }
 
@@ -53,7 +59,11 @@ public class OfficerClaimService {
     public WorkflowResponse startReview(String claimId, String officerId) {
         Claim claim = claimService.loadForUpdate(claimId);
         boolean open = requests.existsByClaimAndStatus(claim, InformationRequestStatus.OPEN);
+        ClaimStatus from = claim.getStatus();
+        String previous = claim.getAssignedOfficerId();
         claim.startReview(officerId, open);
+        claimService.recordAssignment(claim, previous, officerId);
+        claimService.recordTransition(claim, from, officerId);
         return WorkflowResponse.from(claims.saveAndFlush(claim));
     }
 
@@ -78,7 +88,9 @@ public class OfficerClaimService {
             throw ApiException.badRequest("INVALID_SETTLED_AMOUNT", "A rejection must not carry a settledAmount");
         }
 
+        ClaimStatus from = claim.getStatus();
         claim.decide(body.decision().toStatus(), body.decisionReason().trim(), settled, body.decidedByOfficerId());
+        claimService.recordTransition(claim, from, body.decidedByOfficerId());
         return DecisionResponse.from(claims.saveAndFlush(claim));
     }
 }

@@ -28,7 +28,7 @@ class ClaimWorkflowTest extends IntegrationTestBase {
         b.put("decision", "REJECTED");
         b.put("decisionReason", "Evidence does not meet the policy requirements.");
         b.put("settledAmount", null);
-        b.put("currency", "SGD");
+        b.put("currency", "INR");
         b.put("decidedByOfficerId", "OFF-1007");
         return b;
     }
@@ -120,10 +120,10 @@ class ClaimWorkflowTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$[0].claimId").value(id))
                 .andExpect(jsonPath("$[0].status").value("OPEN"));
 
-        postJson("/api/v1/claims/" + id + "/information", Map.of("informationRequestId", irId, "answer", "Estimate is 2,200 SGD."))
+        postJson("/api/v1/claims/" + id + "/information", Map.of("informationRequestId", irId, "answer", "Estimate is 2,200 INR."))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ANSWERED"))
-                .andExpect(jsonPath("$.answer").value("Estimate is 2,200 SGD."))
+                .andExpect(jsonPath("$.answer").value("Estimate is 2,200 INR."))
                 .andExpect(jsonPath("$.answeredAt").exists());
 
         getJson("/api/v1/claims/" + id).andExpect(jsonPath("$.status").value("UNDER_REVIEW"));
@@ -180,7 +180,7 @@ class ClaimWorkflowTest extends IntegrationTestBase {
     @Test
     void settleRecordsDecisionAndMakesClaimTerminal() throws Exception {
         String id = createClaimUnderReview();
-        postJson(officer(id, "decision"), settle("2200.00", "SGD"))
+        postJson(officer(id, "decision"), settle("2200.00", "INR"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.claimId").value(id))
                 .andExpect(jsonPath("$.status").value("SETTLED"))
@@ -205,10 +205,10 @@ class ClaimWorkflowTest extends IntegrationTestBase {
     @Test
     void duplicateDecisionIsConflictAndOriginalDecisionIsKept() throws Exception {
         String id = createClaimUnderReview();
-        postJson(officer(id, "decision"), settle("2200.00", "SGD")).andExpect(status().isOk());
+        postJson(officer(id, "decision"), settle("2200.00", "INR")).andExpect(status().isOk());
         postJson(officer(id, "decision"), reject()).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("INVALID_CLAIM_TRANSITION"));
-        postJson(officer(id, "decision"), settle("1.00", "SGD")).andExpect(status().isConflict());
+        postJson(officer(id, "decision"), settle("1.00", "INR")).andExpect(status().isConflict());
         getJson("/api/v1/claims/" + id).andExpect(jsonPath("$.status").value("SETTLED"))
                 .andExpect(jsonPath("$.settledAmount").value(2200.00));
     }
@@ -216,7 +216,7 @@ class ClaimWorkflowTest extends IntegrationTestBase {
     @Test
     void decisionNotAllowedUnlessUnderReview() throws Exception {
         String submitted = createClaim();
-        postJson(officer(submitted, "decision"), settle("10.00", "SGD")).andExpect(status().isConflict());
+        postJson(officer(submitted, "decision"), settle("10.00", "INR")).andExpect(status().isConflict());
 
         String awaiting = createClaimUnderReview();
         postJson(officer(awaiting, "information-requests"), Map.of("question", "Q", "requestedByOfficerId", "OFF-1"))
@@ -237,14 +237,14 @@ class ClaimWorkflowTest extends IntegrationTestBase {
     @Test
     void decisionValidation() throws Exception {
         String id = createClaimUnderReview();
-        postJson(officer(id, "decision"), settle("0.00", "SGD")).andExpect(status().isBadRequest());
-        postJson(officer(id, "decision"), settle("-5.00", "SGD")).andExpect(status().isBadRequest());
-        postJson(officer(id, "decision"), settle("2400.01", "SGD")).andExpect(status().isBadRequest())
+        postJson(officer(id, "decision"), settle("0.00", "INR")).andExpect(status().isBadRequest());
+        postJson(officer(id, "decision"), settle("-5.00", "INR")).andExpect(status().isBadRequest());
+        postJson(officer(id, "decision"), settle("2400.01", "INR")).andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_SETTLED_AMOUNT"));
         postJson(officer(id, "decision"), settle("100.00", "USD")).andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("CURRENCY_MISMATCH"));
 
-        Map<String, Object> missingAmount = settle("1.00", "SGD");
+        Map<String, Object> missingAmount = settle("1.00", "INR");
         missingAmount.put("settledAmount", null);
         postJson(officer(id, "decision"), missingAmount).andExpect(status().isBadRequest());
 
@@ -252,15 +252,15 @@ class ClaimWorkflowTest extends IntegrationTestBase {
         rejectWithAmount.put("settledAmount", new java.math.BigDecimal("5.00"));
         postJson(officer(id, "decision"), rejectWithAmount).andExpect(status().isBadRequest());
 
-        Map<String, Object> badEnum = settle("1.00", "SGD");
+        Map<String, Object> badEnum = settle("1.00", "INR");
         badEnum.put("decision", "UNDER_REVIEW");
         postJson(officer(id, "decision"), badEnum).andExpect(status().isBadRequest());
 
-        Map<String, Object> noReason = settle("1.00", "SGD");
+        Map<String, Object> noReason = settle("1.00", "INR");
         noReason.put("decisionReason", "");
         postJson(officer(id, "decision"), noReason).andExpect(status().isBadRequest());
 
-        postJson(officer("CLM-2026-999999", "decision"), settle("1.00", "SGD")).andExpect(status().isNotFound());
+        postJson(officer("CLM-2026-999999", "decision"), settle("1.00", "INR")).andExpect(status().isNotFound());
         // nothing above should have changed the claim
         getJson("/api/v1/claims/" + id).andExpect(jsonPath("$.status").value("UNDER_REVIEW"));
     }
@@ -268,6 +268,6 @@ class ClaimWorkflowTest extends IntegrationTestBase {
     @Test
     void settlingExactlyTheClaimedAmountIsAllowed() throws Exception {
         String id = createClaimUnderReview();
-        postJson(officer(id, "decision"), settle("2400.00", "SGD")).andExpect(status().isOk());
+        postJson(officer(id, "decision"), settle("2400.00", "INR")).andExpect(status().isOk());
     }
 }

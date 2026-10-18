@@ -21,7 +21,7 @@ Run from the project root with the Maven Wrapper (Java 17 required):
 ## 2. Architecture and package conventions
 
 - Java 17, Spring Boot 3.3.5, Maven, Spring Web, Spring Data JPA, Bean Validation, Flyway, springdoc-openapi. A single modular monolith, base package `com.chubb.claims`.
-- Packages are **by feature**: `claim` (entity, service, repository, create/get, `ReferenceGenerator`), `officer` (workload, assign, review, decision), `information`, `management`, `common` (`ApiException`, `ApiError`, `GlobalExceptionHandler`).
+- Packages are **by feature**: `claim` (entity, service, repository, create/get/history, `ClaimStatusHistory`, `MarketPolicy`, `ReferenceGenerator`), `officer` (workload, assign, review, decision), `information`, `management`, `common` (`ApiException`, `ApiError`, `GlobalExceptionHandler`).
 - Controllers stay thin: bind and validate the request, call a service, return a DTO.
 - Business rules live in the service and in the `Claim` entity. **Lifecycle transitions are enforced inside `Claim`**, never only in a controller.
 - Never return JPA entities from the API. Use DTO records (`CreateClaimRequest`, `ClaimResponse`, `OfficerDtos`, `InformationDtos`, `ManagementSummary`).
@@ -38,11 +38,14 @@ Run from the project root with the Maven Wrapper (Java 17 required):
 
 ## 4. API and validation conventions
 
-- All routes are under `/api/v1`. The 10 endpoints and their JSON are in `API_TEST_CASES.md`; do not change a contract without updating that file, `README.md` and the tests.
+- All routes are under `/api/v1`. The 13 endpoints and their JSON are in `API_TEST_CASES.md`; do not change a contract without updating that file, `README.md` and the tests.
 - Validate with Jakarta annotations on request records (`@Valid @RequestBody`). Query parameters are constrained with `@Validated` (`page >= 0`, `1 <= size <= 100`).
 - Status codes: **400** invalid input, **404** unknown claim or information request, **405** wrong method, **409** invalid transition or duplicate action, **415** wrong content type. Anything unexpected is 500 with no stack trace in the body.
 - Errors go through `GlobalExceptionHandler` and always use `{timestamp, status, error, code, message, path}`. Throw `ApiException` (with a stable `code`) for business failures. Register a handler for any new framework exception so it does not fall into the catch-all 500.
 - Money is `BigDecimal`, scale 2, positive, with an explicit 3-letter currency. Never add amounts of different currencies.
+- Every change of assigned officer must append a `claim_assignment_history` row through `ClaimService.recordAssignment` (only when the assignee changes). Actors are unverified: never present them as authenticated identities.
+- Every status change must append a `claim_status_history` row through `ClaimService.recordTransition` in the same transaction (capture the old status first). Assignment does not change status and is not recorded. Never update or delete history rows.
+- Markets: the six APAC markets are not named in the brief, so never hard-code a list. `claims.markets.allowed` (empty by default) is the only switch.
 - Officer search filters and paging must run in the database (`Specification` + `Pageable`), never in memory. Add an index only for a real filter or query pattern and say why in the migration comment.
 
 ## 5. Claim lifecycle and business rules (as implemented)
@@ -64,13 +67,14 @@ Decision rules: `SETTLED` needs `settledAmount` > 0 and <= claimed amount; `REJE
 - Flyway owns the schema: `src/main/resources/db/migration/V<n>__description.sql`. **Never edit an applied migration**; add a new version. Keep SQL valid for both PostgreSQL and H2 (PostgreSQL mode); avoid vendor-only syntax unless it is guarded.
 - `spring.jpa.hibernate.ddl-auto=validate` must stay. Do not switch to `update`/`create` and do not remove validation to hide a mismatch.
 - Default datasource is in-memory H2 (`sa`, empty password, `MODE=PostgreSQL`); H2 is a **runtime**-scope dependency. PostgreSQL is selected by setting `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` in the environment. The database `claims_db` must exist first.
-- PostgreSQL integration has **not** been verified. Do not say it works until the app and the demo flow have run against a real server.
+- An opt-in `postgres` profile (`application-postgres.properties`, environment variables only) exists. PostgreSQL integration has **not** been verified. Do not say it works until the app and the demo flow have run against a real server.
 - Kafka is **not implemented**. Add it only if asked, after the core works, with a real broker for verification.
 
 ## 7. Testing expectations
 
 - Every endpoint has automated tests: success with the expected body, 400 (missing/invalid fields, malformed JSON), 404 (unknown claim and information request), and 409 where a lifecycle rule applies. Add the same for any new endpoint or rule, in the same change.
 - Use MockMvc with the full Spring context on H2. Extend `IntegrationTestBase` (it empties the tables before each test) so tests are isolated and repeatable. No test may require PostgreSQL or Kafka.
+- Concurrency tests (`ConcurrentTransitionTest`) run on H2 and must not be presented as PostgreSQL proof.
 - Domain rules that need no HTTP go in `ClaimDomainTest`; cross-cutting HTTP contract checks go in `EndpointContractTest` (it is parameterised over the POST endpoints, so add new POST endpoints to its list).
 - Fix real defects in the application. Never weaken or delete an assertion just to get green.
 - Run `.\mvnw.cmd clean test` after every change that touches code, SQL or configuration, and read the Surefire reports.

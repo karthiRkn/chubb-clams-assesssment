@@ -26,23 +26,23 @@ class ManagementSummaryTest extends IntegrationTestBase {
 
     @Test
     void excludesTerminalClaimsAndGroupsLiabilityByCurrencyWithoutMixing() throws Exception {
-        createClaim("SG", "MOTOR", "1000.00", "SGD");                       // SUBMITTED, outstanding
-        String sgdReview = createClaim("SG", "MOTOR", "800.50", "SGD");     // UNDER_REVIEW, outstanding
-        review(sgdReview, "OFF-1");
+        createClaim("SG", "MOTOR", "1000.00", "INR");                       // SUBMITTED, outstanding
+        String inrReview = createClaim("SG", "MOTOR", "800.50", "INR");     // UNDER_REVIEW, outstanding
+        review(inrReview, "OFF-1");
         createClaim("AU", "PROPERTY", "5200.00", "AUD");                    // SUBMITTED, outstanding
 
-        String awaiting = createClaim("SG", "MOTOR", "10.00", "SGD");       // AWAITING_INFORMATION, outstanding
+        String awaiting = createClaim("SG", "MOTOR", "10.00", "INR");       // AWAITING_INFORMATION, outstanding
         review(awaiting, "OFF-1");
         postJson("/api/v1/officer/claims/" + awaiting + "/information-requests",
                 Map.of("question", "Q", "requestedByOfficerId", "OFF-1")).andExpect(status().isCreated());
 
-        String settled = createClaim("SG", "MOTOR", "9999.00", "SGD");      // SETTLED, excluded
+        String settled = createClaim("SG", "MOTOR", "9999.00", "INR");      // SETTLED, excluded
         review(settled, "OFF-1");
         Map<String, Object> settle = new LinkedHashMap<>();
         settle.put("decision", "SETTLED");
         settle.put("decisionReason", "ok");
         settle.put("settledAmount", new BigDecimal("9000.00"));
-        settle.put("currency", "SGD");
+        settle.put("currency", "INR");
         settle.put("decidedByOfficerId", "OFF-1");
         postJson("/api/v1/officer/claims/" + settled + "/decision", settle).andExpect(status().isOk());
 
@@ -61,11 +61,11 @@ class ManagementSummaryTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.generatedAt").exists())
                 .andExpect(jsonPath("$.outstandingClaimCount").value(4))
                 .andExpect(jsonPath("$.outstandingLiabilityByCurrency.length()").value(2))
-                // ordered by currency: AUD then SGD; HKD absent because its only claim is terminal
+                // ordered by currency: AUD then INR; HKD absent because its only claim is terminal
                 .andExpect(jsonPath("$.outstandingLiabilityByCurrency[0].currency").value("AUD"))
                 .andExpect(jsonPath("$.outstandingLiabilityByCurrency[0].claimCount").value(1))
                 .andExpect(jsonPath("$.outstandingLiabilityByCurrency[0].estimatedLiability").value(5200.00))
-                .andExpect(jsonPath("$.outstandingLiabilityByCurrency[1].currency").value("SGD"))
+                .andExpect(jsonPath("$.outstandingLiabilityByCurrency[1].currency").value("INR"))
                 .andExpect(jsonPath("$.outstandingLiabilityByCurrency[1].claimCount").value(3))
                 .andExpect(jsonPath("$.outstandingLiabilityByCurrency[1].estimatedLiability").value(1810.50))
                 .andExpect(jsonPath("$.countsByStatus.SUBMITTED").value(2))

@@ -18,4 +18,9 @@ public class ManagementController {
     public ManagementSummary summary() {
         return service.summary();
     }
+
+    @GetMapping("/officers")
+    public OfficerMetrics officers() {
+        return service.officerMetrics();
+    }
 }

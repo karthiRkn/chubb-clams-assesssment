@@ -32,6 +32,39 @@ public interface ClaimRepository extends JpaRepository<Claim, Long>, JpaSpecific
             """)
     List<CurrencyLiability> outstandingLiabilityByCurrency();
 
+    /** Open (non-terminal) claims per current assignee, status and currency. */
+    @Query("""
+            select c.assignedOfficerId as officerId, c.status as status, c.currency as currency,
+                   count(c) as total, sum(c.claimedAmount) as amount
+            from Claim c
+            where c.assignedOfficerId is not null
+              and c.status not in (com.chubb.claims.claim.ClaimStatus.SETTLED, com.chubb.claims.claim.ClaimStatus.REJECTED)
+            group by c.assignedOfficerId, c.status, c.currency
+            """)
+    List<OfficerStatusAmount> officerWorkload();
+
+    /** Decided claims per deciding officer, outcome and currency (amount is the settled amount; null for rejections). */
+    @Query("""
+            select c.decidedByOfficerId as officerId, c.status as status, c.currency as currency,
+                   count(c) as total, sum(c.settledAmount) as amount
+            from Claim c
+            where c.decidedByOfficerId is not null
+            group by c.decidedByOfficerId, c.status, c.currency
+            """)
+    List<OfficerStatusAmount> officerDecisions();
+
+    interface OfficerStatusAmount {
+        String getOfficerId();
+
+        ClaimStatus getStatus();
+
+        String getCurrency();
+
+        long getTotal();
+
+        BigDecimal getAmount();
+    }
+
     interface StatusCount {
         ClaimStatus getStatus();
 

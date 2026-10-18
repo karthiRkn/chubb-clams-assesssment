@@ -1,6 +1,8 @@
 package com.chubb.claims.information;
 
+import com.chubb.claims.common.OfficerIds;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
 
@@ -11,7 +13,7 @@ public final class InformationDtos {
 
     public record CreateInformationRequest(
             @NotBlank @Size(max = 2000) String question,
-            @NotBlank @Size(max = 50) String requestedByOfficerId) {
+            @NotBlank @Size(max = 50) @Pattern(regexp = OfficerIds.NOT_PLACEHOLDER, message = OfficerIds.PLACEHOLDER_MESSAGE) String requestedByOfficerId) {
     }
 
     public record SubmitInformationRequest(

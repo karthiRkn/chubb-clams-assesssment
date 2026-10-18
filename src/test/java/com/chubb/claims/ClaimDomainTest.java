@@ -17,7 +17,7 @@ class ClaimDomainTest {
 
     private Claim newClaim() {
         return new Claim("CLM-2026-000101", "Mei", "m@example.com", "SG", ClaimType.MOTOR, "d",
-                LocalDate.of(2026, 10, 12), new BigDecimal("2400.00"), "SGD");
+                LocalDate.of(2026, 10, 12), new BigDecimal("2400.00"), "INR");
     }
 
     private Claim underReview() {

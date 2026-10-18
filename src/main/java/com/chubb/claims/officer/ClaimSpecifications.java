@@ -11,7 +11,8 @@ final class ClaimSpecifications {
     private ClaimSpecifications() {
     }
 
-    static Specification<Claim> filter(ClaimStatus status, String market, ClaimType claimType, String assignedOfficerId) {
+    static Specification<Claim> filter(ClaimStatus status, String market, ClaimType claimType, String assignedOfficerId,
+                                         Boolean assigned) {
         Specification<Claim> spec = Specification.where(null);
         if (status != null) {
             spec = spec.and((root, q, cb) -> cb.equal(root.get("status"), status));
@@ -24,6 +25,10 @@ final class ClaimSpecifications {
         }
         if (assignedOfficerId != null && !assignedOfficerId.isBlank()) {
             spec = spec.and((root, q, cb) -> cb.equal(root.get("assignedOfficerId"), assignedOfficerId));
+        }
+        if (assigned != null) {
+            spec = spec.and((root, q, cb) -> assigned ? cb.isNotNull(root.get("assignedOfficerId"))
+                    : cb.isNull(root.get("assignedOfficerId")));
         }
         return spec;
     }

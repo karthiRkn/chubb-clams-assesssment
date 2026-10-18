@@ -32,6 +32,8 @@ public abstract class IntegrationTestBase {
 
     @BeforeEach
     void cleanDatabase() {
+        jdbc.update("delete from claim_assignment_history");
+        jdbc.update("delete from claim_status_history");
         jdbc.update("delete from information_requests");
         jdbc.update("delete from claims");
     }
@@ -69,7 +71,7 @@ public abstract class IntegrationTestBase {
     }
 
     protected String createClaim() throws Exception {
-        return createClaim("SG", "MOTOR", "2400.00", "SGD");
+        return createClaim("SG", "MOTOR", "2400.00", "INR");
     }
 
     protected void assign(String claimId, String officer) throws Exception {

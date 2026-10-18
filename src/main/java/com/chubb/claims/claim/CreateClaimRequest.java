@@ -20,5 +20,5 @@ public record CreateClaimRequest(
         @NotBlank @Size(max = 2000) String description,
         @NotNull @PastOrPresent LocalDate incidentDate,
         @NotNull @Positive @Digits(integer = 17, fraction = 2) BigDecimal claimedAmount,
-        @NotBlank @Pattern(regexp = "[A-Z]{3}", message = "must be a 3-letter upper-case ISO currency code, e.g. SGD") String currency) {
+        @NotBlank @Pattern(regexp = "[A-Z]{3}", message = "must be a 3-letter upper-case ISO currency code, e.g. INR") String currency) {
 }

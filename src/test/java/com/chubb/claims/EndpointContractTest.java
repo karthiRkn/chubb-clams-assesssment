@@ -96,22 +96,22 @@ class EndpointContractTest extends IntegrationTestBase {
 
     @Test
     void blankAndOverlongFieldsAreRejected() throws Exception {
-        Map<String, Object> blankName = claimBody("SG", "MOTOR", "10.00", "SGD");
+        Map<String, Object> blankName = claimBody("SG", "MOTOR", "10.00", "INR");
         blankName.put("claimantName", "   ");
         postJson("/api/v1/claims", blankName).andExpect(status().isBadRequest());
 
-        Map<String, Object> longDescription = claimBody("SG", "MOTOR", "10.00", "SGD");
+        Map<String, Object> longDescription = claimBody("SG", "MOTOR", "10.00", "INR");
         longDescription.put("description", "x".repeat(2001));
         postJson("/api/v1/claims", longDescription).andExpect(status().isBadRequest());
 
-        Map<String, Object> tooManyDecimals = claimBody("SG", "MOTOR", "10.001", "SGD");
+        Map<String, Object> tooManyDecimals = claimBody("SG", "MOTOR", "10.001", "INR");
         postJson("/api/v1/claims", tooManyDecimals).andExpect(status().isBadRequest());
 
-        Map<String, Object> missingType = claimBody("SG", "MOTOR", "10.00", "SGD");
+        Map<String, Object> missingType = claimBody("SG", "MOTOR", "10.00", "INR");
         missingType.remove("claimType");
         postJson("/api/v1/claims", missingType).andExpect(status().isBadRequest());
 
-        Map<String, Object> amountAsText = claimBody("SG", "MOTOR", "10.00", "SGD");
+        Map<String, Object> amountAsText = claimBody("SG", "MOTOR", "10.00", "INR");
         amountAsText.put("claimedAmount", "lots");
         postJson("/api/v1/claims", amountAsText).andExpect(status().isBadRequest());
 
@@ -131,7 +131,7 @@ class EndpointContractTest extends IntegrationTestBase {
 
     @Test
     void clientSuppliedClaimIdIsIgnoredNotRejected() throws Exception {
-        Map<String, Object> body = claimBody("SG", "MOTOR", "10.00", "SGD");
+        Map<String, Object> body = claimBody("SG", "MOTOR", "10.00", "INR");
         body.put("claimId", "CLM-HACK-1");
         body.put("status", "SETTLED");
         postJson("/api/v1/claims", body).andExpect(status().isCreated())
@@ -256,7 +256,7 @@ class EndpointContractTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.status").value("SETTLED"))
                 .andExpect(jsonPath("$.decisionReason").value("Reason"))
                 .andExpect(jsonPath("$.settledAmount").value(1999.99))
-                .andExpect(jsonPath("$.currency").value("SGD"))
+                .andExpect(jsonPath("$.currency").value("INR"))
                 .andExpect(jsonPath("$.decidedByOfficerId").value("OFF-1007"))
                 .andExpect(jsonPath("$.decidedAt").exists())
                 .andExpect(jsonPath("$.updatedAt").exists());
@@ -294,7 +294,7 @@ class EndpointContractTest extends IntegrationTestBase {
 
     @Test
     void summaryHasNoteAndTimestampAndReflectsDecisions() throws Exception {
-        String keep = createClaim("SG", "MOTOR", "100.00", "SGD");
+        String keep = createClaim("SG", "MOTOR", "100.00", "INR");
         String decide = createClaimUnderReview();
         postJson("/api/v1/officer/claims/" + decide + "/decision", decision("REJECTED", null)).andExpect(status().isOk());
 
@@ -306,7 +306,7 @@ class EndpointContractTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.countsByStatus.SUBMITTED").value(1))
                 .andExpect(jsonPath("$.countsByStatus.REJECTED").value(1))
                 .andExpect(jsonPath("$.outstandingLiabilityByCurrency.length()").value(1))
-                .andExpect(jsonPath("$.outstandingLiabilityByCurrency[0].currency").value("SGD"))
+                .andExpect(jsonPath("$.outstandingLiabilityByCurrency[0].currency").value("INR"))
                 .andExpect(jsonPath("$.outstandingLiabilityByCurrency[0].estimatedLiability").value(100.00))
                 .andExpect(jsonPath("$.outstandingLiabilityByCurrency[0].claimCount").value(1));
         assertThat(keep).startsWith("CLM-");
@@ -325,15 +325,15 @@ class EndpointContractTest extends IntegrationTestBase {
 
     @Test
     void summarySumsExactDecimalsPerCurrency() throws Exception {
-        createClaim("SG", "MOTOR", "0.10", "SGD");
-        createClaim("SG", "MOTOR", "0.20", "SGD");
+        createClaim("SG", "MOTOR", "0.10", "INR");
+        createClaim("SG", "MOTOR", "0.20", "INR");
         createClaim("US", "MOTOR", "0.30", "USD");
         var summary = read(getJson("/api/v1/management/summary"));
         Map<String, BigDecimal> byCurrency = new LinkedHashMap<>();
         summary.get("outstandingLiabilityByCurrency")
                 .forEach(n -> byCurrency.put(n.get("currency").asText(), n.get("estimatedLiability").decimalValue()));
         assertThat(byCurrency).hasSize(2);
-        assertThat(byCurrency.get("SGD")).isEqualByComparingTo("0.30");
+        assertThat(byCurrency.get("INR")).isEqualByComparingTo("0.30");
         assertThat(byCurrency.get("USD")).isEqualByComparingTo("0.30");
     }
 
@@ -346,7 +346,7 @@ class EndpointContractTest extends IntegrationTestBase {
         if (settledAmount != null) {
             b.put("settledAmount", new BigDecimal(settledAmount));
         }
-        b.put("currency", "SGD");
+        b.put("currency", "INR");
         b.put("decidedByOfficerId", "OFF-1007");
         return b;
     }

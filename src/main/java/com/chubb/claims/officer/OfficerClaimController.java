@@ -40,9 +40,10 @@ public class OfficerClaimController {
             @RequestParam(required = false) String market,
             @RequestParam(required = false) ClaimType claimType,
             @RequestParam(required = false) String assignedOfficerId,
+            @RequestParam(required = false) Boolean assigned,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(MAX_PAGE_SIZE) int size) {
-        return service.search(status, market, claimType, assignedOfficerId, page, size);
+        return service.search(status, market, claimType, assignedOfficerId, assigned, page, size);
     }
 
     @PostMapping("/{claimId}/assign")

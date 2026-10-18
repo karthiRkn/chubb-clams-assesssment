@@ -15,8 +15,8 @@ class OfficerSearchTest extends IntegrationTestBase {
 
     @BeforeEach
     void seed() throws Exception {
-        sgMotorSubmitted = createClaim("SG", "MOTOR", "100.00", "SGD");
-        sgPropertyReview = createClaim("SG", "PROPERTY", "200.00", "SGD");
+        sgMotorSubmitted = createClaim("SG", "MOTOR", "100.00", "INR");
+        sgPropertyReview = createClaim("SG", "PROPERTY", "200.00", "INR");
         review(sgPropertyReview, "OFF-1");
         auMotorAssigned = createClaim("AU", "MOTOR", "300.00", "AUD");
         assign(auMotorAssigned, "OFF-2");
