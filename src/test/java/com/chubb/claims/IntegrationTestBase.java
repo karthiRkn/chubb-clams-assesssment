@@ -32,6 +32,7 @@ public abstract class IntegrationTestBase {
 
     @BeforeEach
     void cleanDatabase() {
+        jdbc.update("delete from claim_assessments");
         jdbc.update("delete from claim_assignment_history");
         jdbc.update("delete from claim_status_history");
         jdbc.update("delete from information_requests");

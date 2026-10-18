@@ -37,6 +37,18 @@ public final class OfficerDtos {
     public record OfficerRequest(@NotBlank @Size(max = 50) @Pattern(regexp = OfficerIds.NOT_PLACEHOLDER, message = OfficerIds.PLACEHOLDER_MESSAGE) String officerId) {
     }
 
+    /** Review request. {@code assessmentNotes} is optional; blank means no note is recorded. */
+    public record ReviewRequest(
+            @NotBlank @Size(max = 50) @Pattern(regexp = OfficerIds.NOT_PLACEHOLDER, message = OfficerIds.PLACEHOLDER_MESSAGE) String officerId,
+            @Size(max = 2000) String assessmentNotes) {
+    }
+
+    public record AssessmentResponse(String claimId, String officerId, String notes, Instant createdAt) {
+        public static AssessmentResponse from(ClaimAssessment a) {
+            return new AssessmentResponse(a.getClaim().getClaimId(), a.getOfficerId(), a.getNotes(), a.getCreatedAt());
+        }
+    }
+
     public record DecisionRequest(
             @NotNull Decision decision,
             @NotBlank @Size(max = 2000) String decisionReason,

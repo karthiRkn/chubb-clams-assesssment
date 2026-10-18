@@ -1,6 +1,6 @@
 # API Test Cases
 
-Test cases for all 13 implemented endpoints of the Chubb APAC Claims backend. They were written from the actual controllers, DTOs, services and exception handler, not from the planned API list.
+Test cases for all 14 implemented endpoints of the Chubb APAC Claims backend. They were written from the actual controllers, DTOs, services and exception handler, not from the planned API list.
 
 - **Base URL:** `http://localhost:8181` (`server.port=8181` in `application.properties`)
 - **Swagger UI:** `http://localhost:8181/swagger-ui/index.html` (`/swagger-ui.html` redirects there)
@@ -212,7 +212,9 @@ Unassigned-claims example: `GET /api/v1/officer/claims?assigned=false` returns t
 
 `POST /api/v1/officer/claims/{claimId}/assign` and `POST /api/v1/officer/claims/{claimId}/review` - automated: `ClaimWorkflowTest`, `ClaimDomainTest`, `EndpointContractTest`
 
-Request (both): `{ "officerId": "OFF-1007" }`. `officerId` is required, not blank, max 50 characters.
+Request for `assign`: `{ "officerId": "OFF-1007" }`. `officerId` is required, not blank, max 50 characters, and not the placeholder `string`.
+
+Request for `review`: `{ "officerId": "OFF-1007", "assessmentNotes": "Photos match the described damage." }`. `officerId` follows the same rules. `assessmentNotes` is **optional**, max 2000 characters, and a missing, null or blank value saves nothing, so existing clients that send only `officerId` are unaffected. See section 10d.
 
 | ID | Scenario | Request | Expected |
 |---|---|---|---|
@@ -230,6 +232,7 @@ Request (both): `{ "officerId": "OFF-1007" }`. `officerId` is required, not blan
 | TC-REV-05 | Terminal claim | `review` on a decided claim | **409**. |
 | TC-REV-06 | Validation / unknown claim | blank officer / unknown `claimId` | **400** / **404**. |
 | TC-REV-07 | Explicit resume with nothing OPEN | domain rule only (cannot occur through the API, because answering resumes automatically) | Covered by `ClaimDomainTest`. |
+| TC-REV-08 | Review with `assessmentNotes` | `{"officerId":"OFF-1","assessmentNotes":"..."}` | **200**; one note saved (see TC-ASSM-01 in section 10d). |
 
 ## 8. Endpoints 6, 7 and 8 - Information requests
 
@@ -429,6 +432,33 @@ Placeholder officer IDs (`PlaceholderActorTest`): `"string"` in any case as `off
 
 Additional concurrency cases (`ConcurrentTransitionTest`): two answers to one information request give one 200 and one 409; stale review, information request and second decision after a settlement give 409 and write no history.
 
+## 10d. Endpoint 14 - Assessment notes
+
+`GET /api/v1/officer/claims/{claimId}/assessments` - automated: `AssessmentNotesTest`
+
+No parameters. Returns a JSON array, oldest first, one element per saved note. Notes are written by `POST .../review` when `assessmentNotes` is present and not blank. They are not part of the claimant-facing `GET /api/v1/claims/{claimId}` response. There is no authentication, so the `/officer/` route is not access control and `officerId` is unverified.
+
+| ID | Scenario | Expected |
+|---|---|---|
+| TC-ASSM-01 | Review with `"  Photos match the described damage.  "` | **200** `UNDER_REVIEW`; `GET .../assessments` returns one element with `claimId`, `officerId`, trimmed `notes`, `createdAt`. |
+| TC-ASSM-02 | Review with no `assessmentNotes` | **200**; `[]`; nothing stored. |
+| TC-ASSM-03 | Blank (`"   "`) or `null` notes | **200**; nothing stored. |
+| TC-ASSM-04 | Notes of 2001 characters | **400** `VALIDATION_FAILED`; claim stays `SUBMITTED`; nothing stored. Exactly 2000 characters is **200**. |
+| TC-ASSM-05 | Review rejected with 409 (already under review, or `OFFICER_MISMATCH`) while carrying notes | Notes are **not** saved. |
+| TC-ASSM-06 | Placeholder officer ID `string` with notes | **400**; nothing stored. |
+| TC-ASSM-07 | A second review call after an information answer | **409** (the answer already resumed review); no extra note. |
+| TC-ASSM-08 | Resume from `AWAITING_INFORMATION` with no OPEN request, with notes | **200**; second note appended in order. The test reaches this state with a direct database update, because the API cannot produce it. |
+| TC-ASSM-09 | `GET /api/v1/claims/{claimId}` after a review with notes | No `assessmentNotes` field. |
+| TC-ASSM-10 | Unknown claim / `POST` to the URL | **404** `CLAIM_NOT_FOUND` / **405** `METHOD_NOT_ALLOWED`. |
+
+Sample response:
+
+```json
+[
+  { "claimId": "CLM-2026-000101", "officerId": "OFF-1007", "notes": "Photos match the described damage.", "createdAt": "2026-10-18T07:12:00Z" }
+]
+```
+
 ## 11. End-to-end Swagger demo flow
 
 Start the app (`.\mvnw.cmd spring-boot:run`), open `http://localhost:8181/swagger-ui/index.html`, and for each step expand the operation, choose **Try it out**, paste the body, and **Execute**. Copy IDs from responses; do not reuse the sample values.
@@ -462,7 +492,7 @@ The same flow as a PowerShell script is in `README.md`.
 | 2 | `GET /api/v1/claims/{claimId}` | ClaimCreationTest, EndpointContractTest | none |
 | 3 | `GET /api/v1/officer/claims` | OfficerSearchTest, UnassignedFilterTest | TC-SRCH-09 (no match) has no dedicated test |
 | 4 | `POST .../assign` | ClaimWorkflowTest, EndpointContractTest | none |
-| 5 | `POST .../review` | ClaimWorkflowTest, ClaimDomainTest, EndpointContractTest | none |
+| 5 | `POST .../review` | ClaimWorkflowTest, ClaimDomainTest, AssessmentNotesTest, EndpointContractTest | none |
 | 6 | `POST .../information-requests` | ClaimWorkflowTest, EndpointContractTest | none |
 | 7 | `GET .../information-requests` | ClaimWorkflowTest, EndpointContractTest | none |
 | 8 | `POST .../information` | ClaimWorkflowTest, EndpointContractTest | none |
@@ -471,6 +501,7 @@ The same flow as a PowerShell script is in `README.md`.
 | 11 | `GET /api/v1/management/officers` | OfficerMetricsTest | none (no time-based metric exists, so none is tested) |
 | 12 | `GET /api/v1/claims/{claimId}/history` | StatusHistoryTest, ConcurrentTransitionTest | none |
 | 13 | `GET /api/v1/claims/{claimId}/assignments` | AssignmentHistoryTest, ConcurrentTransitionTest | none |
+| 14 | `GET /api/v1/officer/claims/{claimId}/assessments` | AssessmentNotesTest | none |
 
 Not covered by any automated test: a forced `500 INTERNAL_ERROR`, PostgreSQL (the concurrency tests run on H2 only), Kafka, and authentication (none exists).
 
@@ -478,7 +509,7 @@ Not covered by any automated test: a forced `500 INTERNAL_ERROR`, PostgreSQL (th
 
 Filled in only from a real run. The totals come from `.\mvnw.cmd -B clean test` and the Surefire XML files under `target/surefire-reports`:
 
-- **Run on 2026-10-18 (after assignment history, the placeholder-actor check, currency tests and more concurrency tests were added):** `Tests run: 132, Failures: 0, Errors: 0, Skipped: 0`, BUILD SUCCESS, H2 in PostgreSQL mode only.
-- Per class: AssignmentHistoryTest 10, ClaimCreationTest 9, ClaimDomainTest 6, ClaimWorkflowTest 18, ConcurrentTransitionTest 5, CurrencyHandlingTest 5, DefaultMarketTest 1, EndpointContractTest 43, ManagementSummaryTest 2, MarketValidationTest 3, OfficerMetricsTest 6, OfficerSearchTest 6, PlaceholderActorTest 4, StatusHistoryTest 6, UnassignedFilterTest 8.
+- **Run on 2026-10-18 (after assessment notes were added):** `Tests run: 142, Failures: 0, Errors: 0, Skipped: 0`, BUILD SUCCESS, H2 in PostgreSQL mode only.
+- Per class: AssessmentNotesTest 10, AssignmentHistoryTest 10, ClaimCreationTest 9, ClaimDomainTest 6, ClaimWorkflowTest 18, ConcurrentTransitionTest 5, CurrencyHandlingTest 5, DefaultMarketTest 1, EndpointContractTest 43, ManagementSummaryTest 2, MarketValidationTest 3, OfficerMetricsTest 6, OfficerSearchTest 6, PlaceholderActorTest 4, StatusHistoryTest 6, UnassignedFilterTest 8.
 - **Demo flow (section 11):** run for real on 2026-10-18 as the equivalent PowerShell script (not by clicking in the Swagger UI), against a verification instance on port 8199 because another process was using 8181. Results: steps 1-10 returned 201/200/200/200/200/201/200/200/200/200 as documented, step 8 left the claim `UNDER_REVIEW`, step 10 showed `outstandingClaimCount` 0, step 11 returned **409 `INVALID_CLAIM_TRANSITION`**, step 12 returned **404 `CLAIM_NOT_FOUND`**. `/swagger-ui/index.html` returned 200 and `/v3/api-docs` lists 10 paths. Clicking through Swagger UI itself was not performed.
 - **PostgreSQL:** not tested. **Kafka:** not implemented.

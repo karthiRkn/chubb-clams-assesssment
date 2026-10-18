@@ -5,12 +5,15 @@ import com.chubb.claims.claim.ClaimType;
 import com.chubb.claims.officer.OfficerDtos.ClaimSummary;
 import com.chubb.claims.officer.OfficerDtos.DecisionRequest;
 import com.chubb.claims.officer.OfficerDtos.DecisionResponse;
+import com.chubb.claims.officer.OfficerDtos.AssessmentResponse;
 import com.chubb.claims.officer.OfficerDtos.OfficerRequest;
+import com.chubb.claims.officer.OfficerDtos.ReviewRequest;
 import com.chubb.claims.officer.OfficerDtos.PageResponse;
 import com.chubb.claims.officer.OfficerDtos.WorkflowResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import java.util.List;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -52,8 +55,13 @@ public class OfficerClaimController {
     }
 
     @PostMapping("/{claimId}/review")
-    public WorkflowResponse review(@PathVariable String claimId, @Valid @RequestBody OfficerRequest body) {
-        return service.startReview(claimId, body.officerId());
+    public WorkflowResponse review(@PathVariable String claimId, @Valid @RequestBody ReviewRequest body) {
+        return service.startReview(claimId, body.officerId(), body.assessmentNotes());
+    }
+
+    @GetMapping("/{claimId}/assessments")
+    public List<AssessmentResponse> assessments(@PathVariable String claimId) {
+        return service.assessments(claimId);
     }
 
     @PostMapping("/{claimId}/decision")

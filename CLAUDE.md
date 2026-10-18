@@ -38,11 +38,12 @@ Run from the project root with the Maven Wrapper (Java 17 required):
 
 ## 4. API and validation conventions
 
-- All routes are under `/api/v1`. The 13 endpoints and their JSON are in `API_TEST_CASES.md`; do not change a contract without updating that file, `README.md` and the tests.
+- All routes are under `/api/v1`. The 14 endpoints and their JSON are in `API_TEST_CASES.md`; do not change a contract without updating that file, `README.md` and the tests.
 - Validate with Jakarta annotations on request records (`@Valid @RequestBody`). Query parameters are constrained with `@Validated` (`page >= 0`, `1 <= size <= 100`).
 - Status codes: **400** invalid input, **404** unknown claim or information request, **405** wrong method, **409** invalid transition or duplicate action, **415** wrong content type. Anything unexpected is 500 with no stack trace in the body.
 - Errors go through `GlobalExceptionHandler` and always use `{timestamp, status, error, code, message, path}`. Throw `ApiException` (with a stable `code`) for business failures. Register a handler for any new framework exception so it does not fall into the catch-all 500.
 - Money is `BigDecimal`, scale 2, positive, with an explicit 3-letter currency. Never add amounts of different currencies.
+- Assessment notes (optional `assessmentNotes` on review) go in the append-only `claim_assessments` table, are saved only after a successful review, and are never added to claimant-facing responses.
 - Every change of assigned officer must append a `claim_assignment_history` row through `ClaimService.recordAssignment` (only when the assignee changes). Actors are unverified: never present them as authenticated identities.
 - Every status change must append a `claim_status_history` row through `ClaimService.recordTransition` in the same transaction (capture the old status first). Assignment does not change status and is not recorded. Never update or delete history rows.
 - Markets: the six APAC markets are not named in the brief, so never hard-code a list. `claims.markets.allowed` (empty by default) is the only switch.

@@ -14,7 +14,9 @@ import com.chubb.claims.officer.OfficerDtos.DecisionRequest;
 import com.chubb.claims.officer.OfficerDtos.DecisionResponse;
 import com.chubb.claims.officer.OfficerDtos.PageResponse;
 import com.chubb.claims.officer.OfficerDtos.WorkflowResponse;
+import com.chubb.claims.officer.OfficerDtos.AssessmentResponse;
 import java.math.BigDecimal;
+import java.util.List;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -26,11 +28,14 @@ public class OfficerClaimService {
     private final ClaimService claimService;
     private final ClaimRepository claims;
     private final InformationRequestRepository requests;
+    private final ClaimAssessmentRepository assessments;
 
-    public OfficerClaimService(ClaimService claimService, ClaimRepository claims, InformationRequestRepository requests) {
+    public OfficerClaimService(ClaimService claimService, ClaimRepository claims, InformationRequestRepository requests,
+                               ClaimAssessmentRepository assessments) {
         this.claimService = claimService;
         this.claims = claims;
         this.requests = requests;
+        this.assessments = assessments;
     }
 
     /** Filtering, sorting and paging all happen in SQL (Specification + Pageable); nothing is filtered in memory. */
@@ -56,7 +61,7 @@ public class OfficerClaimService {
     }
 
     @Transactional
-    public WorkflowResponse startReview(String claimId, String officerId) {
+    public WorkflowResponse startReview(String claimId, String officerId, String assessmentNotes) {
         Claim claim = claimService.loadForUpdate(claimId);
         boolean open = requests.existsByClaimAndStatus(claim, InformationRequestStatus.OPEN);
         ClaimStatus from = claim.getStatus();
@@ -64,7 +69,17 @@ public class OfficerClaimService {
         claim.startReview(officerId, open);
         claimService.recordAssignment(claim, previous, officerId);
         claimService.recordTransition(claim, from, officerId);
+        if (assessmentNotes != null && !assessmentNotes.isBlank()) {
+            assessments.save(new ClaimAssessment(claim, officerId, assessmentNotes.trim()));
+        }
         return WorkflowResponse.from(claims.saveAndFlush(claim));
+    }
+
+    @Transactional(readOnly = true)
+    public List<AssessmentResponse> assessments(String claimId) {
+        Claim claim = claims.findByClaimId(claimId).orElseThrow(
+                () -> ApiException.notFound("CLAIM_NOT_FOUND", "Claim " + claimId + " was not found"));
+        return assessments.findAllForClaim(claim).stream().map(AssessmentResponse::from).toList();
     }
 
     @Transactional

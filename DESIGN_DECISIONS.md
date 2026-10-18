@@ -10,11 +10,11 @@ The brief (`design.docx`) asks for a backend that lets claimants report an incid
 
 Built, in priority order:
 1. The claim lifecycle with rules enforced on the server (the part most likely to be wrong in a claims system).
-2. Claimant, officer and management endpoints on top of it (13 REST endpoints).
+2. Claimant, officer and management endpoints on top of it (14 REST endpoints).
 3. Efficient officer workload queries and per-currency liability.
 4. Automated tests for every endpoint, on a database that needs no install.
 
-Deliberately not built: authentication, document upload, notifications, Kafka and an assessment record on review. Assignment history was added later (section 3). See section 9.
+Deliberately not built: authentication, document upload, notifications and Kafka. Assignment history and review assessment notes were added later (section 3). See section 9.
 
 ## 2. Modular monolith versus microservices
 
@@ -22,7 +22,7 @@ Deliberately not built: authentication, document upload, notifications, Kafka an
 
 Why:
 - **One transaction boundary.** Every state change touches one claim (and sometimes one information request) and must be atomic. In one process this is a single database transaction with a row lock. Splitting into services would turn a status change plus an information request into a distributed workflow.
-- **Small domain.** There are four tables (`claims`, `information_requests`, `claim_status_history`, `claim_assignment_history`) and one lifecycle. Only `claims` and `information_requests` drive the workflow; the two history tables are append-only records written in the same transaction. Several services would add network calls, deployment units, versioned contracts and distributed failure handling for no gain at this size.
+- **Small domain.** There are five tables (`claims`, `information_requests`, `claim_status_history`, `claim_assignment_history`, `claim_assessments`) and one lifecycle. Only `claims` and `information_requests` drive the workflow; the other three are append-only records written in the same transaction. Several services would add network calls, deployment units, versioned contracts and distributed failure handling for no gain at this size.
 - **Speed.** The brief is a short sprint. A monolith lets most of the effort go into the rules and tests.
 - **Clear seams remain.** Controllers are thin, rules live in the `Claim` entity and services, and DTOs separate the API from the entities. The packages can be pulled apart later if there is a reason.
 
@@ -39,12 +39,13 @@ None of those exist yet, and none is measured, so the monolith stands.
 
 ## 3. Data model
 
-Four tables, created by `V1__create_claims_schema.sql`, `V2__create_claim_status_history.sql` and `V3__create_claim_assignment_history.sql` (Flyway owns the schema; Hibernate only validates it).
+Five tables, created by `V1__create_claims_schema.sql`, `V2__create_claim_status_history.sql`, `V3__create_claim_assignment_history.sql` and `V4__create_claim_assessments.sql` (Flyway owns the schema; Hibernate only validates it).
 
 ```text
 claims 1 ----< information_requests
 claims 1 ----< claim_status_history
 claims 1 ----< claim_assignment_history
+claims 1 ----< claim_assessments
 ```
 
 **`claims`**
@@ -71,6 +72,9 @@ claims 1 ----< claim_assignment_history
 **`claim_assignment_history`** (V3, append-only)
 - `id`, `claim_pk` (foreign key), `previous_officer_id` (null for the first assignment), `new_officer_id`, `changed_at`, `actor` (nullable). A row is written by `ClaimService.recordAssignment` in the same transaction whenever the assignee really changes: on `assign`, and when `review` assigns an unassigned claim. It is separate from status history because assignment does not change status. `actor` is null for `assign` because the request carries only the new assignee, and is the reviewing officer for `review`; nothing is authenticated, so `actor` is never a verified identity. `GET /api/v1/claims/{claimId}/assignments` reads it (index `(claim_pk, changed_at)`).
 
+**`claim_assessments`** (V4, append-only)
+- `id`, `claim_pk` (foreign key), `officer_id`, `notes` (max 2000), `created_at`. `POST .../review` takes an optional `assessmentNotes`; a non-blank value is trimmed and saved by `OfficerClaimService.startReview` in the same transaction as the review, after the transition succeeded, so a rejected review saves nothing. A table was chosen over a column on `claims` because a claim can be reviewed more than once and overwriting would lose the earlier note. Existing clients that send only `officerId` are unaffected (the field is additive). Notes are read with `GET /api/v1/officer/claims/{claimId}/assessments` (index `(claim_pk, created_at)`) and are **not** added to the claimant-facing claim response, which has no authentication to protect internal notes. Without authentication the officer route is only a naming convention, so anyone who can reach the port can read the notes. Notes are plain text: no findings structure, no recommended amount, no edit or delete.
+
 **Indexes** (each tied to a real query): `(status, market)`, `assigned_officer_id`, `claim_type` and `created_at` for the officer workload search; `(status, currency)` for the management summary; `information_requests (claim_pk, status)` for listing and open-request checks.
 
 **Not modelled:** officers, claimants, markets and policies are not tables. Officer IDs are free text; there is no policy to check cover, limits or deductibles against.
@@ -94,7 +98,7 @@ UNDER_REVIEW --decision--> SETTLED | REJECTED   (terminal)
 
 ## 5. Synchronous REST now, Kafka later
 
-**Decision: every operation is a synchronous REST call.** There are 13 endpoints and no messaging.
+**Decision: every operation is a synchronous REST call.** There are 14 endpoints and no messaging.
 
 Why REST fits each of them:
 - **Commands** (create, assign, review, request information, answer, decide) need an immediate answer: the caller must know whether the transition was legal. The result is a status code and a body, and the change is committed in the same request.
@@ -165,7 +169,7 @@ What the code does today:
 - **Kafka is not implemented** (section 5).
 - **Text-only information.** There is no document or photo upload.
 - **Unassigned filter (built):** `assigned=false` lists claims nobody has picked up. It uses `assigned_officer_id IS NULL` on the existing officer index; no new index was added, and I have not measured it on a large table.
-- **Review records nothing.** There are no assessment notes, findings or recommended amount.
+- **Assessment is free text only.** Review can save optional notes (V4), but there are no structured findings, no recommended amount, and notes cannot be edited. Notes are unauthenticated and readable by anyone who can reach the port.
 - **History actors are unverified:** status and assignment history record the officer ID from the request (or `CLAIMANT`, or null for `assign`). Only the Swagger placeholder `"string"` is rejected (400, `OfficerIds`); any other text is accepted. Assignment history now exists (V3). The data for "time in review" exists but no metric uses it yet.
 - **Markets are validated only if configured** (section 7); the six are not named, so none is built in, and `IND` was not added because nothing in the project establishes it (the code is two letters).
 - **Concurrency testing is limited to H2.** Tested: concurrent creation, two decisions, a decision against an information request, two reviewers on one claim, two answers to one request, and stale actions after a decision. The row locking has never run on PostgreSQL.
@@ -177,7 +181,7 @@ What the code does today:
 1. **Security:** authentication (for example OAuth2/JWT), roles for claimant, officer and manager, and claimant ownership so people see only their own claims.
 2. **Run against PostgreSQL** (and add PostgreSQL integration tests, for example Testcontainers) to verify the migration, sequences and locking.
 3. **Use the status and assignment histories** for time-in-state, time-to-decision and reassignment metrics.
-4. **An assessment record on review** (notes, findings, recommended amount).
+4. **A richer assessment record** (structured findings, recommended amount) on top of the notes.
 5. **Set the market list** (`claims.markets.allowed`) once the six markets are known.
 6. **Outbox plus Kafka events** (section 5), verified against a real broker.
 7. **Better liability:** expected-payout estimates by status and claim type, policy limits and deductibles, and optional FX conversion for a group view.
@@ -187,7 +191,7 @@ What the code does today:
 
 ## 10. Questions a reviewer might ask
 
-- **Why not microservices?** One transactional workflow over four tables (two workflow tables and two append-only history tables); services would add distributed failure handling without a measured need (section 2).
+- **Why not microservices?** One transactional workflow over five tables (two workflow tables and three append-only record tables); services would add distributed failure handling without a measured need (section 2).
 - **Why REST and not Kafka?** Commands need an immediate, consistent answer; events are proposed for side effects later, with an outbox (section 5).
 - **Why does answering an information request resume review automatically?** To avoid a stalled queue; the trade-off is that no officer explicitly acknowledges it (section 4).
 - **Why is liability the claimed amount?** It is the only amount known for an open claim; it is labelled an estimate, and its limits are listed (section 6).

@@ -16,7 +16,7 @@ This service gives each group an API for that, enforces the claim lifecycle on t
 
 ## 2. Implemented features
 
-All 13 endpoints are implemented and have automated tests.
+All 14 endpoints are implemented and have automated tests.
 
 | # | Method and path | Purpose |
 |---|---|---|
@@ -33,6 +33,7 @@ All 13 endpoints are implemented and have automated tests.
 | 11 | `GET /api/v1/management/officers` | Per-officer open workload and decision performance, per currency |
 | 12 | `GET /api/v1/claims/{claimId}/history` | A claim's status history: from, to, when, who |
 | 13 | `GET /api/v1/claims/{claimId}/assignments` | A claim's assignment history: previous officer, new officer, when, actor |
+| 14 | `GET /api/v1/officer/claims/{claimId}/assessments` | Assessment notes recorded during review (officer-facing) |
 
 Request and response examples for every endpoint, with positive and negative cases, are in **[API_TEST_CASES.md](API_TEST_CASES.md)**.
 
@@ -56,6 +57,7 @@ Request and response examples for every endpoint, with positive and negative cas
 - **Management summary** counts non-terminal claims only, groups liability by currency, and labels it "Simple estimate ... Not an actuarial reserve".
 - **Officer search** filters (`status`, `market`, `claimType`, `assignedOfficerId`, `assigned`) and paging run in SQL. `assigned=false` lists claims nobody has picked up (`assigned_officer_id IS NULL`); `assigned=true` lists claims that have an officer; a non-boolean value is a 400 `INVALID_PARAMETER`, and `assigned=false` together with `assignedOfficerId` is a 400 `CONFLICTING_FILTERS`. `size` defaults to 20 and is capped at 100. `market` matching is exact and case-sensitive.
 - **Status history** (`claim_status_history`, migration V2) gets one row per status change: creation (`fromStatus` null, actor `CLAIMANT`), review, information request, answer-resume (actor `CLAIMANT`) and decision. The row is written in the same transaction as the change. Assigning an officer does not change status and is not recorded. `actor` is the officer ID from the request, or `CLAIMANT`; officer IDs are trusted free text, so this is not proof of identity.
+- **Assessment notes** (`claim_assessments`, migration V4): `POST .../review` accepts an optional `assessmentNotes` (max 2000 characters; blank means none). A non-blank note is trimmed and saved with the reviewing officer ID and time, in the same transaction as the review; a rejected review (409/400) saves nothing. Notes are append-only, one row per review, and are read with `GET /api/v1/officer/claims/{claimId}/assessments`. They are deliberately **not** added to the claimant-facing `GET /api/v1/claims/{claimId}` response. There is no authentication, so the officer route is a naming convention, not access control, and the officer ID is unverified. Notes are text only: no findings structure and no recommended amount.
 - **Assignment history** (`claim_assignment_history`, migration V3) gets a row whenever the assigned officer actually changes: `assign`, and the automatic assignment when `review` is started on an unassigned claim. It stores previous officer (null the first time), new officer and time. `actor` is null for `assign`, because that request only names the new assignee, and is the reviewing officer for `review`. Re-assigning the same officer adds nothing.
 - **Placeholder officer IDs:** the Swagger UI default `"string"` (any case) is rejected with 400 `VALIDATION_FAILED` on every officer ID field. This only catches the placeholder: officer IDs are still unauthenticated free text, so history actors are not verified identities.
 - **Currency:** every claim has an explicit 3-letter currency (`NOT NULL`, format-checked, returned with every amount). INR is used in the examples; the API still accepts any well-formed code because the brief does not name supported currencies, and no exchange rates exist. Liability is the sum of **claimed** amounts of open claims, per currency, never added across currencies; it is neither the expected settlement nor a reserve.
@@ -111,9 +113,9 @@ Prerequisites: a JDK 17 and internet access the first time (to download Maven an
     ├── main/resources/
     │   ├── application.properties
     │   ├── application-postgres.properties   opt-in PostgreSQL profile (not verified)
-    │   └── db/migration/V1__..., V2__create_claim_status_history.sql, V3__create_claim_assignment_history.sql
+    │   └── db/migration/V1__..., V2__create_claim_status_history.sql, V3__create_claim_assignment_history.sql, V4__create_claim_assessments.sql
     └── test/
-        ├── java/com/chubb/claims/   IntegrationTestBase + 15 test classes
+        ├── java/com/chubb/claims/   IntegrationTestBase + 16 test classes
         └── resources/application-test.properties
 ```
 
@@ -207,6 +209,7 @@ Reports: `target/surefire-reports/` contains `TEST-*.xml` and `*.txt` per test c
 | `MarketValidationTest`, `DefaultMarketTest` | Configurable market allow-list (test values only) and the empty-default behaviour |
 | `StatusHistoryTest` | History rows for creation and the full lifecycle, actors, no row for assign or rejected transitions, 404, GET only |
 | `ConcurrentTransitionTest` | Two competing decisions; decision vs information request; two reviewers racing on one claim; two answers to one request; stale actions after a decision (H2 only) |
+| `AssessmentNotesTest` | Notes saved and retrieved (trimmed), none or blank stores nothing, 2000-character limit, rejected review saves nothing, notes absent from the claimant response, 404/405 |
 | `AssignmentHistoryTest` | Assignment rows (previous/new/actor), same-officer no-op, review auto-assignment, rejected actions, 404, GET only |
 | `PlaceholderActorTest` | Placeholder `"string"` rejected on every officer field; IDs containing the word still accepted |
 | `CurrencyHandlingTest` | Currency persisted and returned, malformed currency rejected, per-currency liability with two currencies, currency mismatch, settled amount scale |
@@ -245,11 +248,12 @@ Invoke-RestMethod -Method Post "$b/api/v1/officer/claims/$id/decision" -Headers 
 
 Recorded from real runs on 2026-10-18 (Windows 11, Java 17.0.16, Maven wrapper):
 
-- `.\mvnw.cmd clean test` (run after adding assignment history, the placeholder-actor check, the currency tests and more concurrency tests): **Tests run: 132, Failures: 0, Errors: 0, Skipped: 0**, BUILD SUCCESS. H2 only. Per class: AssignmentHistoryTest 10, ClaimCreationTest 9, ClaimDomainTest 6, ClaimWorkflowTest 18, ConcurrentTransitionTest 5, CurrencyHandlingTest 5, DefaultMarketTest 1, EndpointContractTest 43, ManagementSummaryTest 2, MarketValidationTest 3, OfficerMetricsTest 6, OfficerSearchTest 6, PlaceholderActorTest 4, StatusHistoryTest 6, UnassignedFilterTest 8. The demo flow and live checks below were run earlier, before these changes, and were not repeated.
+- `.\mvnw.cmd clean test` (run after adding assessment notes): **Tests run: 142, Failures: 0, Errors: 0, Skipped: 0**, BUILD SUCCESS. H2 only. Per class: AssessmentNotesTest 10, AssignmentHistoryTest 10, ClaimCreationTest 9, ClaimDomainTest 6, ClaimWorkflowTest 18, ConcurrentTransitionTest 5, CurrencyHandlingTest 5, DefaultMarketTest 1, EndpointContractTest 43, ManagementSummaryTest 2, MarketValidationTest 3, OfficerMetricsTest 6, OfficerSearchTest 6, PlaceholderActorTest 4, StatusHistoryTest 6, UnassignedFilterTest 8. The demo flow and the live checks below were run before assessment notes existed and were not repeated.
 - `.\mvnw.cmd spring-boot:run`: started in about 6 seconds, Flyway applied V1 on H2. Port 8181 was already used by another process during the final check, so the run below used `--server.port=8199` for a verification instance; the configured port is still 8181.
 - **Demo flow run for real** (the PowerShell script in section 11, against that verification instance): create 201, get 200, search 200, assign 200, review 200, information request 201, list 200, answer 200 (claim back to `UNDER_REVIEW` automatically), settle 200, management summary 200 (`outstandingClaimCount` 0 afterwards), second decision **409 `INVALID_CLAIM_TRANSITION`**, unknown claim **404 `CLAIM_NOT_FOUND`**, `/swagger-ui/index.html` 200, `/v3/api-docs` lists 10 paths.
 - **Officer metrics live check** (after endpoint 11 was added, verification instance on port 8199): three claims created, one assigned, one reviewed, one reviewed and settled by a second officer; `GET /api/v1/management/officers` returned 200 with the expected per-officer counts and per-currency amounts, and `/v3/api-docs` now includes `/api/v1/management/officers`. The "10 paths" in the demo-flow line above was true before this endpoint existed; there are now 11.
 - **Live check after the history changes** (curl against a verification instance on port 8199): create 201; `assigned=false` listed the claim; `officerId":"string"` on assign returned 400; assign 200, review 200, information request, answer 200, settle 200, second decision 409; `GET .../history` returned five rows (SUBMITTED by `CLAIMANT`, UNDER_REVIEW by `OFF-1007`, AWAITING_INFORMATION by `OFF-1007`, UNDER_REVIEW by `CLAIMANT`, SETTLED by `OFF-1007`); `GET .../assignments` returned one row (null to `OFF-1007`, `actor` null); the summary note shows the new wording. The Swagger UI itself was not clicked through.
+- **Live check after assessment notes** (curl against a verification instance on port 8199): review with `assessmentNotes` returned 200; `GET /api/v1/officer/claims/{claimId}/assessments` returned the saved note; the claimant `GET /api/v1/claims/{claimId}` response had no assessment field; `/v3/api-docs` listed 14 `/api/v1` paths. Swagger UI was not clicked through.
 - **Not verified:** PostgreSQL (no installation), Kafka (not implemented).
 
 If you change code, re-run the tests and update these numbers from the new output.
@@ -269,7 +273,7 @@ If you change code, re-run the tests and update these numbers from the new outpu
 - **Kafka is not implemented.**
 - **Additional information is text only.** There is no document or photo upload.
 - Locking was only exercised on H2. Concurrent creation and two competing transitions on one claim are tested (`ConcurrentTransitionTest`), but never on PostgreSQL.
-- Status history records status changes only; assignments have their own history (V3). The actor is a trusted, unauthenticated officer ID or `CLAIMANT`. There is no assessment record (notes, findings) on review.
+- Status history records status changes only; assignments have their own history (V3). The actor is a trusted, unauthenticated officer ID or `CLAIMANT`. Assessment is free-text notes only (V4): no structured findings, no recommended amount, no edit; the notes route is unauthenticated.
 - The six APAC markets are not named in the brief, so no market list is built in; set `claims.markets.allowed` once they are known.
 - No rate limiting, no pagination on the information-request list, and no API versioning beyond `/api/v1`.
 - `market` filtering is case-sensitive.
