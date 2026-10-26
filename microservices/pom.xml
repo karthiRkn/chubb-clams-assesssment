@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.5</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.chubb</groupId>
+    <artifactId>claims-microservices</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>claims-microservices</name>
+    <description>Chubb APAC Claims Management - three business microservices: Auth (user-service), Claim and Assessment</description>
+
+    <modules>
+        <module>claims-common</module>
+        <module>user-service</module>
+        <module>claim-service</module>
+        <module>assessment-service</module>
+        <module>system-tests</module>
+    </modules>
+
+    <properties>
+        <java.version>17</java.version>
+        <springdoc.version>2.6.0</springdoc.version>
+        <!-- Not managed by the Spring Boot BOM. -->
+        <jjwt.version>0.12.6</jjwt.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.chubb</groupId>
+                <artifactId>claims-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.chubb</groupId>
+                <artifactId>claims-common</artifactId>
+                <version>${project.version}</version>
+                <type>test-jar</type>
+            </dependency>
+            <dependency>
+                <groupId>com.chubb</groupId>
+                <artifactId>user-service</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.chubb</groupId>
+                <artifactId>claim-service</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.chubb</groupId>
+                <artifactId>assessment-service</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>

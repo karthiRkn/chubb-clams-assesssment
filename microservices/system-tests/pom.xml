@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.chubb</groupId>
+        <artifactId>claims-microservices</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>system-tests</artifactId>
+    <name>system-tests</name>
+    <description>Starts the three services (User, Claim, Assessment) in one JVM (own in-memory database and random port each) and drives the whole system over real HTTP, including the original monolith tests adapted to the new model.</description>
+
+    <properties>
+        <!-- test-only module: there is nothing to package or install -->
+        <maven.jar.skip>true</maven.jar.skip>
+        <maven.install.skip>true</maven.install.skip>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.chubb</groupId>
+            <artifactId>user-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.chubb</groupId>
+            <artifactId>claim-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.chubb</groupId>
+            <artifactId>claims-common</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.chubb</groupId>
+            <artifactId>assessment-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

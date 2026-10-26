@@ -9,3 +9,6 @@ target/
 application-local.properties
 application-secret.properties
 *.log
+
+# PID files written by microservices/scripts/start-all.ps1
+*.pid

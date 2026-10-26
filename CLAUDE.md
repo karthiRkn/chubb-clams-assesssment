@@ -2,90 +2,129 @@
 
 Practical instructions for anyone (human or AI) changing this repository. The application is implemented; these rules keep it consistent, tested and honestly documented.
 
-Documents: `README.md` (overview, setup, run, limits), `API_TEST_CASES.md` (endpoint contracts and test cases), `.claude/ai-journal.md` (working journal). They describe the **implemented** behaviour. If code and documents disagree, fix the document or the code in the same change.
+Documents: `README.md` (overview, setup, run, limits), `API_TEST_CASES.md` (endpoint contracts and test cases), `DESIGN_DECISIONS.md` (why it is built this way), `.claude/ai-journal.md` (working journal). They describe the **implemented** behaviour. If code and documents disagree, fix the document or the code in the same change.
+
+The system is **three Spring Boot microservices** in `microservices/`: **User** (the Auth Service), **Claim** (claims, assignment, history, management reports) and **Assessment** (review, assessment history, information requests, decision, settlement). The original single application is still in the repository root (`src/`, `pom.xml`) as a reference baseline. **Do not modify, move or delete it, and do not run `clean` there while someone may be running it from `target/`, without being asked.** It must keep building (`.\mvnw.cmd test` in the root) and its own tests stay unchanged. Removing it needs the user's explicit approval.
 
 ## 1. Build, run, test (Windows)
 
-Run from the project root with the Maven Wrapper (Java 17 required):
+Run from the repository root with the Maven Wrapper (Java 17 required):
 
 ```bat
-.\mvnw.cmd clean test            # all tests (H2, no database install needed)
-.\mvnw.cmd spring-boot:run       # app on http://localhost:8181
+.\mvnw.cmd -f microservices/pom.xml clean test              # all modules and all tests (H2, no database install needed)
+.\mvnw.cmd -f microservices/pom.xml -DskipTests package     # runnable jars: microservices\<service>\target\<service>-0.0.1-SNAPSHOT-exec.jar
+.\microservices\scripts\start-all.ps1 -SkipBuild            # start the three in dependency order (see README section 6)
+.\microservices\scripts\smoke-test.ps1                      # demo flow, as real users, against the running services
+.\microservices\scripts\stop-all.ps1                        # stops only what start-all.ps1 started
+.\mvnw.cmd test                                             # the original monolith (root): must still pass
 ```
 
-- Port: **8181** (`server.port` in `src/main/resources/application.properties`).
-- Swagger UI: `http://localhost:8181/swagger-ui/index.html`; OpenAPI JSON: `/v3/api-docs`.
-- Test reports: `target/surefire-reports/`.
+- Ports: User **8185**, Claim **8181**, Assessment **8182** (`server.port` in each `application.properties`; override with `SERVER_PORT`, `--server.port` or `start-all.ps1 -UserPort/-ClaimPort/-AssessmentPort`). Port 8181 is often taken by the IDE-run monolith: check before starting, never stop a process you did not start. If Claim runs elsewhere, set `CLAIM_SERVICE_URL` for Assessment (and `USER_SERVICE_URL` for Claim if User moves); `start-all.ps1` does it for the ports it is given.
+- **Every service needs the same `JWT_SECRET`, and none has a default.** Each `application.properties` has `claims.security.jwt.secret=${JWT_SECRET:}`; a missing or shorter-than-32-character value stops the service at start-up (`JwtUtil` says so; observed on the real jar). `start-all.ps1` uses the `JWT_SECRET` you set, otherwise it generates a random one for that run, gives it to its three processes only, never prints or saves it and restores your session environment; tokens of that run die with it. IDE run configurations must set the same `JWT_SECRET` (and the `*_DB_*` variables, section 6) themselves. Tests generate a random secret per JVM and never read the properties files. Never write a literal secret into any file; `JwtSecretConfigurationTest` fails if a service has a default or reads another variable.
+- Maven in PowerShell: quote `-D` options that contain a dot (`"-Dsurefire.failIfNoSpecifiedTests=false"`), and when building one module use `-pl <module> -am` so `claims-common`'s test-jar is found. Without `-am` (and in an IDE that does not load `microservices/pom.xml`) a module compiles against the `claims-common` jar installed in `~/.m2`; a stale one gives "cannot find symbol" for `ClaimVisibility` / `Role.CLAIMS_OFFICER`. After changing `claims-common`, run `install` on it (`-pl claims-common -am install`); README section 6 has the symptoms.
+- Health: `GET /actuator/health` on each service answers `{"status":"UP"}` without a token (only `health` is exposed, no details). Swagger UI: `http://localhost:<port>/swagger-ui/index.html`; OpenAPI JSON: `/v3/api-docs`.
+- Test reports: `microservices/<module>/target/surefire-reports/`. Run `system-tests` through the reactor (`-f microservices/pom.xml`), not on its own.
 - If the wrapper cannot download dependencies, report the real error (network, proxy, permissions). Do not work around company controls.
 
 ## 2. Architecture and package conventions
 
-- Java 17, Spring Boot 3.3.5, Maven, Spring Web, Spring Data JPA, Bean Validation, Flyway, springdoc-openapi. A single modular monolith, base package `com.chubb.claims`.
-- Packages are **by feature**: `claim` (entity, service, repository, create/get/history, `ClaimStatusHistory`, `MarketPolicy`, `ReferenceGenerator`), `officer` (workload, assign, review, decision), `information`, `management`, `common` (`ApiException`, `ApiError`, `GlobalExceptionHandler`).
-- Controllers stay thin: bind and validate the request, call a service, return a DTO.
-- Business rules live in the service and in the `Claim` entity. **Lifecycle transitions are enforced inside `Claim`**, never only in a controller.
-- Never return JPA entities from the API. Use DTO records (`CreateClaimRequest`, `ClaimResponse`, `OfficerDtos`, `InformationDtos`, `ManagementSummary`).
-- State-changing workflows load the claim with `ClaimService.loadForUpdate` (pessimistic row lock) and run in a transaction.
-- Keep it simple; do not add services, layers or frameworks that the task does not need.
+- Java 17, Spring Boot 3.3.5, Maven multi-module, Spring Web, Spring Data JPA, Bean Validation, Spring Security, `jjwt` 0.12.6, Flyway, springdoc-openapi, Spring `RestClient`, actuator (health only). Base package `com.chubb.claims`, one sub-package per service: `user`, `claim`, `assessment`; shared `common` (and `common.security`).
+- Modules: `claims-common` (`ApiException`, `ApiError`, `GlobalExceptionHandler`, `OfficerIds`, `DownstreamClient`, and `security/`: `Role`, `AuthenticatedUser`, `ClaimVisibility`, `JwtUtil`, `JwtFilter`, `SecurityConfig`, `AccessRule(s)`, service tokens; no domain code; its **test-jar** holds the shared test helpers in `com.chubb.claims.testsupport`, deliberately outside the scanned `common` package), `user-service`, `claim-service`, `assessment-service`, `system-tests`. `user-service` is the Auth Service; it was not renamed because nothing needed it.
+- Inside a service, packages are **by feature**. Claim: `claim` (entity, service, repository, create/list/get/update, histories, `MarketPolicy`, `ReferenceGenerator`, `ClaimSpecifications`), `claim.officer` (staff list, assign), `claim.internal` (service-to-service transitions), `claim.management` (the workload and liability reports), `claim.client` (`UserClient`), `claim.config`. Assessment: `assessment` (review, history, decision, settlement), `assessment.information` (information requests), `assessment.client` (`ClaimClient`), `assessment.config`.
+- Controllers stay thin: bind and validate the request, call a service, return a DTO. Business rules live in the service and in the `Claim` entity. **Lifecycle transitions are enforced inside `Claim`**, in the Claim Service, never only in a controller and never in another service.
+- Never return JPA entities from the API. Use DTO records.
+- State-changing claim transitions load the claim with `ClaimService.loadForUpdate` (pessimistic row lock) and run in a local transaction inside the Claim Service. Never hold that lock (or any transaction) across a call to another service in the Claim Service (see `OfficerClaimService.assign`).
+- Keep it simple; do not add services, layers or frameworks that the task does not need. **No gateway, discovery or Kafka unless asked.** The reporting and information services no longer exist (merged into Claim and Assessment); do not recreate them.
 
 ## 3. IDs
 
 - `id` is the internal `BIGINT` identity key. It is never used in public routes.
-- `claimId` (`CLM-<year>-<6 digits>`) is the public business reference, generated server-side from the database sequence `claim_number_seq`. It is stable after creation and has a unique constraint. Clients must not supply it, and the create request has no such field.
-- Information requests have their own ID (`IR-<year>-<6 digits>`, from `information_request_number_seq`) and refer to their parent claim by `claimId` in the API.
-- Every `{claimId}` path variable is looked up by the business ID. Never query it against `id`.
-- Do not generate IDs with `count + 1` or in-memory counters.
+- `claimId` (`CLM-<year>-<6 digits>`) is the public business reference, generated server-side by the Claim Service from the sequence `claim_number_seq`. It is stable after creation and unique. Clients must not supply it.
+- `claimantId` is the logged-in claimant's login name, taken from the token when the claim is created (never from the body); `claimantName` and `policyNumber` are separate fields the claimant types. Keep the three apart.
+- Information requests have their own ID (`IR-<year>-<6 digits>`, from the Assessment Service's `information_request_number_seq`) and refer to the claim by `claimId`. Other services refer to a claim **only** by `claimId`, never by the internal `id`, and there is no foreign key across services.
+- Every `{claimId}` path variable is looked up by the business ID. Do not generate IDs with `count + 1` or in-memory counters.
 
 ## 4. API and validation conventions
 
-- All routes are under `/api/v1`. The 14 endpoints and their JSON are in `API_TEST_CASES.md`; do not change a contract without updating that file, `README.md` and the tests.
-- Validate with Jakarta annotations on request records (`@Valid @RequestBody`). Query parameters are constrained with `@Validated` (`page >= 0`, `1 <= size <= 100`).
-- Status codes: **400** invalid input, **404** unknown claim or information request, **405** wrong method, **409** invalid transition or duplicate action, **415** wrong content type. Anything unexpected is 500 with no stack trace in the body.
-- Errors go through `GlobalExceptionHandler` and always use `{timestamp, status, error, code, message, path}`. Throw `ApiException` (with a stable `code`) for business failures. Register a handler for any new framework exception so it does not fall into the catch-all 500.
-- Money is `BigDecimal`, scale 2, positive, with an explicit 3-letter currency. Never add amounts of different currencies.
-- Assessment notes (optional `assessmentNotes` on review) go in the append-only `claim_assessments` table, are saved only after a successful review, and are never added to claimant-facing responses.
-- Every change of assigned officer must append a `claim_assignment_history` row through `ClaimService.recordAssignment` (only when the assignee changes). Actors are unverified: never present them as authenticated identities.
-- Every status change must append a `claim_status_history` row through `ClaimService.recordTransition` in the same transaction (capture the old status first). Assignment does not change status and is not recorded. Never update or delete history rows.
+- All routes are under `/api/v1`; the endpoints and their JSON are in `API_TEST_CASES.md`. Do not change a contract without updating that file, `README.md` and the tests.
+- Validate with Jakarta annotations on request records (`@Valid @RequestBody`); query parameters with `@Validated` (`page >= 0`, `1 <= size <= 100`). For an optional free-text field use `@Pattern(regexp = "(?s).*\\S.*")`, never `".*\\S.*"`: without `(?s)` a line break makes a good multi-line text "blank" (a bug found once in the claim edit).
+- Status codes: **400** invalid input (also `INVALID_OFFICER`, `NO_FIELDS_TO_UPDATE`, `CURRENCY_MISMATCH`, `INVALID_APPROVED_AMOUNT`), **401** `UNAUTHENTICATED` (no valid token) or `INVALID_CREDENTIALS` (login, also for a deactivated user), **403** the caller is known but may not do this: `FORBIDDEN` (the role may not use the route, from the security chain) or `OFFICER_IDENTITY_MISMATCH` / `ASSIGNMENT_NOT_PERMITTED` (raised in code), **404** unknown claim or request, **and a claim outside the caller's scope (section 4a)**, **405** wrong method, **409** invalid transition, `OFFICER_MISMATCH`, `CLAIM_NOT_EDITABLE` or duplicate action, **415** wrong content type, **503** `DOWNSTREAM_UNAVAILABLE` and **502** `DOWNSTREAM_ERROR` when a service this one calls is unreachable or answers unusably. Anything unexpected is 500 with no stack trace in the body.
+- Errors go through `GlobalExceptionHandler` and always use `{timestamp, status, error, code, message, path}`. Throw `ApiException` (with a stable `code`) for business failures; register a handler for any new framework exception.
+- Money is `BigDecimal`, scale 2, positive, with an explicit 3-letter currency; never add amounts of different currencies. `approvedAmount` is null until a claim is approved, and stays null for a rejected one.
+- The Assessment Service's append-only `claim_assessments` table is the assessment history (`kind` NOTE, APPROVED, REJECTED, SETTLED). An entry is written before the Claim Service is called and committed only if the Claim Service accepts, so a refused action saves nothing. It is never added to claimant-facing responses and only a claims officer (and ADMIN) can read it.
+- Every change of assigned officer appends a `claim_assignment_history` row through `ClaimService.recordAssignment` (only when the assignee changes; actor = who made the change). Every status change appends a `claim_status_history` row through `ClaimService.recordTransition` in the same transaction (capture the old status first). Every claimant edit that changes something appends a `claim_update_history` row (free text is recorded as "changed", never copied). Never update or delete history rows (V5 renamed one status label inside history once; do not repeat it).
 - Markets: the six APAC markets are not named in the brief, so never hard-code a list. `claims.markets.allowed` (empty by default) is the only switch.
-- Officer search filters and paging must run in the database (`Specification` + `Pageable`), never in memory. Add an index only for a real filter or query pattern and say why in the migration comment.
+- List and search filters and paging run in the database (`Specification` + `Pageable`), never in memory. Add an index only for a real filter or query pattern and say why in the migration comment.
+
+## 4a. Authentication and authorization rules
+
+- Tokens are JWTs (HS256) issued only by the User Service; the other services verify them with the shared secret and never call the User Service for that. Roles: `CLAIMANT`, `CLAIMS_OFFICER`, `MANAGER`, `ADMIN` (people) and `SERVICE` (service to service, never storable for a user). No role hierarchy; ADMIN is allowed on every public route; `/internal/v1/**` is SERVICE-only for every service, enforced once in `SecurityConfig` (never list it per service); a route with no row is ADMIN-only.
+- **Every public route must have a row in its service's `AccessRules`** (`<Service>AccessRules`, a Spring bean); authorization is that table, not `@PreAuthorize`. Adding or changing a route means, in the same change: its `AccessRules` row; the hand-written expected matrix in that service's `*SecurityTest.theRuleTableIsTheDocumentedRoleMatrix` (written from the documentation, **never generated from the code**); the in-service scope rule below if it returns claim data; `API_TEST_CASES.md` section 3b; and `README.md` section 2. Mutation-check a new rule table once (widen a rule, see a test fail).
+- **Who may see which claim** is one class, `ClaimVisibility` in `claims-common` (SQL form: `ClaimSpecifications.visibleTo`): a claimant only claims they submitted (`claims.claimant_id`); a claims officer only unassigned claims and claims assigned to them; a manager and an administrator every claim. Outside that, answer exactly as for an unknown claim (404 `CLAIM_NOT_FOUND`, same message). A claim with no recorded owner is never a claimant's. Apply the rule to anything new that returns or acts on a claim; the Assessment Service gets `claimantId` and `assignedOfficerId` from the Claim Service's internal status view.
+- **Who an officer action is recorded against** comes from the token: `AuthenticatedUser.actingOfficerId(bodyId)`. A claims officer may omit the body field or repeat their own name; naming another officer is 403 `OFFICER_IDENTITY_MISMATCH`. An administrator acting for an officer must name one (400 `VALIDATION_FAILED` otherwise), and the history then shows that officer, not the administrator; route every officer action through `ActingAs.officer(...)` in the Assessment Service, which also writes one log line naming the administrator (the only record of who really acted: keep it, and keep control characters out of it). Never trust an officer ID in a body for anything else (assignee names are checked by the rule below). The Claim Service additionally requires the **assigned** officer for request-information, decision and settlement (409 `OFFICER_MISMATCH`).
+- **Assignment:** a claims officer may only take a claim for themselves (403 `ASSIGNMENT_NOT_PERMITTED` for anyone else; no lookup needed); a manager or administrator may name any officer, who must be an **active claims officer**: `UserClient` asks the User Service's internal route (400 `INVALID_OFFICER` if not, 503 if the User Service is down) **before** the claim is locked. **Starting a review of an unassigned claim is an assignment too**: the Assessment Service sends `officerVerified` true only for a claims officer's own token; otherwise (an administrator named the officer) the Claim Service makes the same eligibility check in `InternalClaimController.review`. Any new route that can set `assigned_officer_id` must apply this rule; there are tests that fail if the check is removed.
+- Service tokens: every call to another service carries a fresh 60-second SERVICE token (the `RestClientCustomizer` in `claims-common`); do not forward a person's token and do not add per-client auth code. A downstream 401/403 is a configuration fault and reaches the caller as 502 `DOWNSTREAM_ERROR` with no detail.
+- Passwords exist only in the User Service and only as BCrypt hashes; no response, log line or error message may contain a password, a hash, a token or the secret.
+- **Active flag:** `PUT /api/v1/users/{username}/active` (ADMIN) switches an account on or off; an inactive person gets the same 401 as a wrong password and cannot get a new token (keep it reported as "credentials expired", never "disabled": Spring tests "disabled" before it compares the password, so the answer would be measurably faster and reveal the account; `UserActiveFlagTest` counts the BCrypt comparisons). A token already issued works until it expires (there is no revocation); an administrator cannot deactivate themselves.
+- **Default test users (owner's decision, demo only):** `admin1` (ADMIN), `officer1` (CLAIMS_OFFICER), `manager1` (MANAGER), `claimant1` (CLAIMANT), password `password123`, created by `DemoUsers` at start-up when `claims.auth.demo-users.enabled` is true: true in the packaged `application.properties` (`${DEMO_USERS:true}`), false in code and in the User Service's test properties; it must stay opt-out with a WARN line in the log. They are created only if missing and never reset. Do not add any other default credential or default administrator, do not reuse that password anywhere real, keep the switch documented wherever the users are, and say plainly in every document that they make the system a demo, not a secure deployment.
+- The login route is documented in the User Service's Swagger UI (group **Authentication**), the README ("Getting a token") and `API_TEST_CASES.md` section 3b. Keep the examples in step with the demo users.
+- Every service's `*Application` class stays in its own module; the IDE once moved `UserServiceApplication` into the monolith's `src/main/java`. Put it back and tell the owner, do not edit the monolith.
+- Never describe the system as secure or production-ready. The known limits (shared secret, no revocation, no lockout or rate limit, no TLS, demo users) are listed in `README.md` section 14; keep that list true.
 
 ## 5. Claim lifecycle and business rules (as implemented)
 
-Statuses: `SUBMITTED`, `UNDER_REVIEW`, `AWAITING_INFORMATION`, `SETTLED`, `REJECTED`. `SETTLED` and `REJECTED` are terminal.
+Statuses: `SUBMITTED`, `UNDER_REVIEW`, `MORE_INFO_REQUIRED`, `APPROVED`, `REJECTED`, `SETTLED`. `REJECTED` and `SETTLED` are terminal; `APPROVED` is not.
 
 | Action | Allowed from | Result |
 |---|---|---|
 | assign | any non-terminal | status unchanged, officer set |
-| review | `SUBMITTED`; `AWAITING_INFORMATION` only if no request is `OPEN` | `UNDER_REVIEW`; 409 `OFFICER_MISMATCH` if another officer is assigned |
-| information request | `UNDER_REVIEW` | `AWAITING_INFORMATION`, request `OPEN` |
-| answer | `AWAITING_INFORMATION` | request `ANSWERED`; claim **resumes to `UNDER_REVIEW` automatically** when no `OPEN` request remains |
-| decision | `UNDER_REVIEW` | `SETTLED` or `REJECTED` |
+| review | `SUBMITTED`; `MORE_INFO_REQUIRED` only if no request is `OPEN` | `UNDER_REVIEW`; 409 `OFFICER_MISMATCH` if another officer is assigned |
+| request information | `UNDER_REVIEW`, by the assigned officer | `MORE_INFO_REQUIRED`, request `OPEN` |
+| answer | `MORE_INFO_REQUIRED` | request `ANSWERED`; claim **resumes to `UNDER_REVIEW` automatically** when no `OPEN` request remains |
+| approve | `UNDER_REVIEW`, by the assigned officer | `APPROVED`, `approvedAmount` set |
+| reject | `UNDER_REVIEW`, by the assigned officer | `REJECTED`, reason kept, no amount |
+| settle | `APPROVED`, by the assigned officer | `SETTLED`; a rejected claim can never be settled (409) |
+| claimant edit | `SUBMITTED` only, by the owner | details changed, edit recorded; 409 `CLAIM_NOT_EDITABLE` afterwards |
 
-Decision rules: `SETTLED` needs `settledAmount` > 0 and <= claimed amount; `REJECTED` must have none; decision currency must equal the claim currency; a second decision is a 409 and the first is kept. Management summary counts only non-terminal claims, groups liability by currency, and labels it a simple estimate, not an actuarial reserve. Additional information is text only; document upload does not exist and must not be claimed.
+Decision rules: an approval needs `approvedAmount` > 0 and <= claimed amount; a rejection must have none; the decision currency must equal the claim currency; a second decision is a 409 and the first is kept. The management summary counts every claim that is not `SETTLED` or `REJECTED`, groups liability by currency, counts an `APPROVED` claim at its approved amount and any other at its claimed amount, and labels it a simple estimate, not an actuarial reserve. Additional information is text only; document upload does not exist and must not be claimed.
 
 ## 6. Database and configuration
 
-- Flyway owns the schema: `src/main/resources/db/migration/V<n>__description.sql`. **Never edit an applied migration**; add a new version. Keep SQL valid for both PostgreSQL and H2 (PostgreSQL mode); avoid vendor-only syntax unless it is guarded.
-- `spring.jpa.hibernate.ddl-auto=validate` must stay. Do not switch to `update`/`create` and do not remove validation to hide a mismatch.
-- Default datasource is in-memory H2 (`sa`, empty password, `MODE=PostgreSQL`); H2 is a **runtime**-scope dependency. PostgreSQL is selected by setting `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` in the environment. The database `claims_db` must exist first.
-- An opt-in `postgres` profile (`application-postgres.properties`, environment variables only) exists. PostgreSQL integration has **not** been verified. Do not say it works until the app and the demo flow have run against a real server.
+- **Each service owns its database; no service reads or writes another's tables.** User: `users`. Claim: `claims`, `claim_status_history`, `claim_assignment_history`, `claim_update_history`. Assessment: `claim_assessments`, `information_requests`. There is no Reporting database (the service is gone). Share data only through a service's REST API.
+- Flyway owns each schema: `microservices/<service>/src/main/resources/db/migration/<user|claim|assessment>/V<n>__description.sql` (each service sets its own `spring.flyway.locations`). **Never edit an applied migration**; add a new version. Keep SQL valid for both PostgreSQL and H2 (PostgreSQL mode). A migration that changes stored data (V5 Claim, V2 User, V2 Assessment) needs a test that runs it over a database that already holds old rows (`ClaimMigrationTest`, `UserMigrationTest`, `AssessmentMigrationTest`).
+- **One database per service, never two services in one database.** A database has one Flyway history table and every service has a version 1 with different content, so the second service to start fails with "Migration checksum mismatch for migration version 1". **Do not run Flyway `repair` or `clean` to fix that**: repair from one side only moves the failure, `clean` deletes data. Give the service its own database (`CREATE DATABASE <service>_db`, names as in each `application-postgres.properties`). `DatabasePerServiceConfigurationTest` fails the build if two services' packaged URLs are equal. Diagnose a mismatch read-only first (`select ... from flyway_schema_history`, README section 8); never change a database you were not asked to change, and ask before `CREATE DATABASE`, `DROP`, `repair` or `clean`.
+- Do not run `clean` (or `mvnw clean test`) in `microservices` while the owner may be running a service from the IDE: it deletes `<module>/target/classes` under the running process. Build and test in a copy of the sources, or run `test`/`package` without `clean`, and say so.
+- `spring.jpa.hibernate.ddl-auto=validate` must stay; do not switch to `update`/`create` or remove validation to hide a mismatch.
+- Default datasource is an in-memory H2 per service (`sa`, empty password, `MODE=PostgreSQL`); H2 is a **runtime**-scope dependency. PostgreSQL is selected per service with `USER_DB_*`, `CLAIM_DB_*`, `ASSESSMENT_DB_*` (`_URL`, `_USERNAME`, `_PASSWORD`) in the environment; its database must exist first. Other settings, all from the environment: `JWT_SECRET` (every service, required), `JWT_EXPIRY` (User, default `60m`), `CLAIM_SERVICE_URL` (Assessment), `USER_SERVICE_URL` (Claim), `DEMO_USERS` and `DEMO_USERS_PASSWORD` (User, default `true` and `password123`), `BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD` (User, optional extra administrator).
+- **Never put a credential in a properties file**: no database password, no secret, no connection string with a user in it. `JwtSecretConfigurationTest` fails the build if any packaged `application*.properties` holds one (the one allowed literal is the public demo password). A database password was once written into two properties files in a synced folder; treat it as exposed and never repeat it. If you find a credential in a file, report where without repeating it.
+- Opt-in `postgres` profiles (`application-postgres.properties`, environment variables only) exist. **PostgreSQL status, honestly:** earlier, a local PostgreSQL 17.6 ran Claim migrations V1-V4 and User V1, Hibernate validation, an authenticated search and logins. **Not run on PostgreSQL:** Claim V5, User V2, Assessment V2 (they ran on H2, including over old rows), claim creation (`nextval`), transitions, `SELECT ... FOR UPDATE` locking, `TIMESTAMP WITH TIME ZONE` round trips, the concurrency tests, and the Assessment database. Flyway will apply the new migrations the first time a service starts against an existing database (V5 renames a status and columns); tell the owner before that happens. Do not say any of it works on PostgreSQL until it has run there.
 - Kafka is **not implemented**. Add it only if asked, after the core works, with a real broker for verification.
 
 ## 7. Testing expectations
 
-- Every endpoint has automated tests: success with the expected body, 400 (missing/invalid fields, malformed JSON), 404 (unknown claim and information request), and 409 where a lifecycle rule applies. Add the same for any new endpoint or rule, in the same change.
-- Use MockMvc with the full Spring context on H2. Extend `IntegrationTestBase` (it empties the tables before each test) so tests are isolated and repeatable. No test may require PostgreSQL or Kafka.
-- Concurrency tests (`ConcurrentTransitionTest`) run on H2 and must not be presented as PostgreSQL proof.
-- Domain rules that need no HTTP go in `ClaimDomainTest`; cross-cutting HTTP contract checks go in `EndpointContractTest` (it is parameterised over the POST endpoints, so add new POST endpoints to its list).
-- Fix real defects in the application. Never weaken or delete an assertion just to get green.
-- Run `.\mvnw.cmd clean test` after every change that touches code, SQL or configuration, and read the Surefire reports.
+- Every endpoint, public or `/internal`, has automated tests in **its own service module**: success with the expected body, 400, 404 (unknown claim and request, and a claim outside the caller's scope), 409 where a lifecycle rule applies, and **401/403 per role (section 4a)**. Add the same for any new endpoint or rule, in the same change. A new `/internal/v1` route also needs a test that a person's token (ADMIN included) gets 403.
+- Service tests use MockMvc with the full Spring context on that service's H2 database and extend that module's `IntegrationTestBase` (it empties the tables, `@Import`s `DefaultTestTokens`, and supplies a random `claims.security.jwt.secret` from `TestAuth.secret()`; never put a literal signing secret in a test file). **Other services are replaced by mocking the client class** (`@MockBean ClaimClient` in Assessment, `UserClient` in Claim), and failure paths (peer refuses, peer down) are tested. `UserClientTest` runs the real client against a local HTTP server. No test may require PostgreSQL or Kafka.
+- **Default test identity:** a request that sets no `Authorization` header is sent as ADMIN (username `test-admin`), or as SERVICE on `/internal` (`DefaultTestTokens` in MockMvc tests, `HttpMvc` in `system-tests`). A test about *who* is calling sets its own header from `TestAuth.bearer(jwt, role, username)`; an **empty** header means "no credentials". The business-rule tests therefore prove a rule for an authorised caller only, so every new route also needs its role and scope tests. An administrator acting for an officer must name the officer in the body.
+- Each service has a `*SecurityTest` with the three checks in section 4a (every route as every role and anonymous; the hand-written expected matrix; `RouteCoverage`).
+- `system-tests` boots all three services in one JVM and drives them over real HTTP (`HttpMvc` routes by path via `SystemUnderTest.baseUrlFor`; `SystemJdbc` by table; one random JWT secret per run; a bootstrap administrator). Behaviour that spans services belongs there, including real logins (`AuthenticationFlowTest`) and failure behaviour (`ServiceFailureTest`). A manager or administrator can only assign to a real, active claims officer, so `SystemUnderTest.OFFICERS` seeds **lower-case officer accounts** (`off-1007`, `off-a`, ...); the replayed tests use those names. The original monolith's tests were replayed here and have been **adapted deliberately** to the new model (statuses, field names, approve then settle, actors); they stay unchanged in the monolith itself. Do not weaken an assertion to get green.
+- Concurrency tests run on H2 and must not be presented as PostgreSQL proof. Domain rules that need no HTTP go in `ClaimDomainTest` (including the hand-written transition table); cross-cutting HTTP checks go in each service's `EndpointContractTest` / `*ContractTest` (parameterised over that service's POST endpoints, so add new POST endpoints to its list).
+- Fix real defects in the application. Run `.\mvnw.cmd -f microservices/pom.xml clean test` (in a copy while the owner's services run, section 6) after every change that touches code, SQL or configuration, and read the Surefire reports.
+
+## 7a. Rules for service-to-service calls
+
+- The dependency graph is acyclic and fixed: **Assessment to Claim, Claim to User**; the User Service calls nobody and nobody calls the Assessment Service. Do not add a call that closes a cycle (pass the fact in the request instead, as `hasOpenInformationRequests` does).
+- Call another service only through its client class (`ClaimClient` in Assessment, `UserClient` in Claim) built on `DownstreamClient`. It re-raises the other service's 400/404/409 with the same status and code, turns an unreachable or slow service into 503 and anything else into 502 without passing detail on, and **never retries**. Do not add retries to a call that changes state.
+- A service changes only its own database. To change another service's data, call that service. A workflow writes its own database in a local transaction and calls the owning service **before commit**, so a refusal or outage rolls the local write back; keep that order. Do not hold a database lock across a call to another service unless the design says so (`InformationService.submit` does, deliberately).
+- Each client declares only the fields it reads and tolerates new ones; statuses and roles are read as text so a new value cannot break parsing.
+- Every new `/internal/v1` route is documented in `API_TEST_CASES.md` section 3a and tagged `Internal (service-to-service)` in Swagger. It needs no access rule (the shared chain makes it SERVICE-only) but does need the person-token-403 test.
+- Say plainly that cross-service consistency is best effort (`README.md` section 3 lists the windows). Do not describe the services as transactional across each other.
 
 ## 8. Documentation maintenance
 
 When behaviour, ports, configuration, endpoints or tests change, update in the same change:
 - `README.md` (setup, ports, features, results, limitations),
 - `API_TEST_CASES.md` (contracts, test cases, coverage table),
-- this file if a rule changes,
+- `DESIGN_DECISIONS.md` if a decision or its trade-off changes, and this file if a rule changes,
 - `.claude/ai-journal.md` with a new entry: the real prompt/goal, files changed, decisions (accepted, challenged, overridden, and why), commands run and their real results, unresolved issues.
 
 Never write history, commits, prompts or results that did not happen.
@@ -93,8 +132,8 @@ Never write history, commits, prompts or results that did not happen.
 ## 9. Security and secrets
 
 - Never commit passwords, tokens, connection strings with credentials, or `.env` files. Credentials come only from environment variables. Never ask for or accept real passwords in chat.
-- `.gitignore` must keep excluding `target/`, `.idea/`, `*.iml`, `.env*`, `*.log` and local override property files.
-- There is **no authentication or authorization** in this application. Do not describe it as secure, and do not claim access control exists. Adding it is future work.
+- `.gitignore` must keep excluding `target/`, `.idea/`, `*.iml`, `.env*`, `*.log`, `*.pid` and local override property files.
+- Authentication and role-based authorization exist (section 4a), but the system is **not** secure enough to call production-ready: one shared HMAC secret signs every token, there is no revocation, refresh, lockout, rate limit or TLS, and the demo users are on by default. Describe exactly what exists and what does not; do not say "secure". Never log, print or echo a token, a password, a hash or `JWT_SECRET`. The demo password is public by design (README) and is the one exception; it is still never written to a log.
 - Do not install software, change database server settings, or bypass administrator, proxy or company security controls without explaining the need first.
 
 ## 10. Verify, do not invent
@@ -102,4 +141,4 @@ Never write history, commits, prompts or results that did not happen.
 - Report real command output. State the actual test totals (run, failed, errors, skipped) from Maven and the Surefire files.
 - If a command was not run, say it was not run. If something cannot be run (for example PostgreSQL is missing), say so as a blocker.
 - Do not claim a feature, endpoint, build, test or integration works unless it was actually executed and observed.
-- Keep a short list of known limitations in `README.md` up to date.
+- Keep the list of known limitations in `README.md` up to date.
