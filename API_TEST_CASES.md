@@ -12,6 +12,8 @@ Test cases for the 18 claim-domain endpoints and the 8 User Service routes of th
 
 Each service also answers `GET /actuator/health` without a token (section 3c). Paths in the sections below are written relative to the service that serves them. Section 3a lists the service-to-service routes.
 
+**Update 2026-10-27.** Sections 13 to 20 were added: PostgreSQL setup (13), the eight demo and test users with login examples (14), two complete end-to-end flows with real requests and responses (15), a role matrix for all 26 endpoints (16), 210 positive and negative scenarios plus the downstream-failure cases (17), the 15-step Swagger order (18), a Postman collection (19) and the final coverage table (20). Sections 1 to 12 are unchanged except for the notes marked `Update 2026-10-27`. Everything in sections 14 to 20 was executed live against jars built from commit `ee90578` on spare ports with in-memory H2; **section 13 (PostgreSQL) was not run**, and the Postman collection was not imported into Postman.
+
 - **Headers:** `Content-Type: application/json` on every `POST`/`PUT`/`PATCH`, and **`Authorization: Bearer <accessToken>` on every request except `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /actuator/health`, Swagger UI and `/v3/api-docs`**. Get a token from `POST /api/v1/auth/login` (section 3b). The cases in sections 4 to 10g say what each endpoint returns for a caller whose role is allowed; the role rules, 401 and 403 cases are in section 3b. Where a case below does not name a role, it was run as an allowed one.
 - **IDs:** `{claimId}` in a path is the public business ID (for example `CLM-2026-000101`), never the internal numeric `id`. Sample IDs and timestamps below are illustrative; always use the values the running app returns.
 - **Error body (all 4xx/5xx):** `{ "timestamp", "status", "error", "code", "message", "path" }`. No stack traces.
@@ -141,7 +143,7 @@ The services call each other over REST. The dependency graph is fixed: **Assessm
 
 1. `POST http://localhost:8185/api/v1/auth/login` with `{"username": "...", "password": "..."}`. It is served by the **User Service only**; the other services only check tokens (on them the same path gives 401 without a token, 404 with one). In the User Service's Swagger UI it is under the group **Authentication**, with one request example per default user.
 2. Send `Authorization: Bearer <accessToken>` to any service until `expiresIn` seconds have passed (3600 by default), then log in again.
-3. **Default test users** (demo only; switch off with `DEMO_USERS=false`): `admin1` (ADMIN), `officer1` (CLAIMS_OFFICER), `manager1` (MANAGER), `claimant1` (CLAIMANT), all with the password `password123` (or `DEMO_USERS_PASSWORD`). They are created at start-up when missing and never reset. Besides them, an administrator can be created from `BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD`; administrators create officers and managers, and claimants register themselves. The default users make the system a demo, not a secure deployment.
+3. **Default test users** (demo only; switch off with `DEMO_USERS=false`): `admin1` (ADMIN), `officer1` (CLAIMS_OFFICER), `manager1` (MANAGER), `claimant1` (CLAIMANT), all with the password `password123` (or `DEMO_USERS_PASSWORD`). They are created at start-up when missing and never reset. **Only these four are seeded.** The extra accounts `admin2`, `officer2`, `manager2` and `claimant2` used from section 14 on do not exist after a start-up: `admin1` creates them with `POST /api/v1/users` (section 14.2). Besides them, an administrator can be created from `BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD`; administrators create officers and managers, and claimants register themselves. The default users make the system a demo, not a secure deployment.
 4. **There is no default signing secret.** Every service reads `JWT_SECRET` (at least 32 characters, the **same** value for all three) and refuses to start without it. `start-all.ps1` generates a random one for its own run when you set none; it is never printed or saved. A token issued before the role `OFFICER` was renamed `CLAIMS_OFFICER` carries a role that no longer exists and is refused with 401: log in again.
 
 ### Role matrix
@@ -239,9 +241,9 @@ No response ever contains a password or its hash. Deactivating an account stops 
 | TC-DEMO-05 | The password is stored as a BCrypt hash; a second start-up neither duplicates nor resets a user | 4 rows; a changed hash is kept | `DemoUsersTest` |
 | TC-DEMO-06 | Switch and password rules | Off: nothing created or looked up; on with a password under 8 characters or none: start-up fails without echoing it; an existing user is skipped and the others are still created; only person roles | user-service `DemoUsersUnitTest` |
 | TC-DEMO-07 | Log in as the default users, then call protected APIs on the Claim and Assessment services | claimant1 creates, reads and lists a claim; **manager1 assigns it to officer1** (the Claim Service asks the User Service); officer1 reviews as themselves (Assessment calls Claim) and asks for information; claimant1 sees the request; manager1 reads both reports; wrong roles get **403**; no token **401** naming the login route | system `DemoUsersFlowTest`; real jars, section 12 |
-| TC-CFG-01 | No service ships a signing secret | Each of the three `application.properties` has exactly `claims.security.jwt.secret=${JWT_SECRET:}` (environment variable only, no default) | system `JwtSecretConfigurationTest` |
-| TC-CFG-02 | A service refuses to start without it, or with a short one | The message names `JWT_SECRET` and "at least 32 characters"; the port is never opened | claims-common `JwtUtilTest` (too short, missing); **real jar started with no `JWT_SECRET`** (section 12) |
-| TC-CFG-03 | No credential literal in any packaged configuration | Every key containing `password` or `secret`, in `application.properties` and `application-postgres.properties` of the three services, is an environment placeholder or empty; the only literal allowed is the documented public demo password; no database URL carries a user or password | `JwtSecretConfigurationTest.noPackagedConfigurationFile...` |
+| TC-CFG-01 | No service ships a signing secret | Each of the three `application.properties` has exactly `claims.security.jwt.secret=${JWT_SECRET:}` (environment variable only, no default) | system `JwtSecretConfigurationTest` **(FAILS on commit `ee90578`, run 2026-10-27: the committed files carry a literal fallback after `JWT_SECRET:`; see the update in section 12)** |
+| TC-CFG-02 | A service refuses to start without it, or with a short one | The message names `JWT_SECRET` and "at least 32 characters"; the port is never opened | claims-common `JwtUtilTest` (too short, missing); **real jar started with no `JWT_SECRET`** (section 12) **(the real-jar part was NOT reproduced on commit `ee90578`: a jar started with no `JWT_SECRET` answered health UP; see the update in section 12)** |
+| TC-CFG-03 | No credential literal in any packaged configuration | Every key containing `password` or `secret`, in `application.properties` and `application-postgres.properties` of the three services, is an environment placeholder or empty; the only literal allowed is the documented public demo password; no database URL carries a user or password | `JwtSecretConfigurationTest.noPackagedConfigurationFile...` **(FAILS on commit `ee90578` for the `claims.security.jwt.secret` line, run 2026-10-27; see the update in section 12)** |
 | TC-CFG-04 | Database settings are per service | The datasource URL, user and password of each service come from `USER_DB_*`, `CLAIM_DB_*` and `ASSESSMENT_DB_*` respectively, so one cannot be pointed at another's database by accident | `JwtSecretConfigurationTest.theEnvironmentVariablesAreNamedAfterTheirService...` |
 | TC-DB-01 | No two services share a database by default | The packaged `spring.datasource.url` defaults of the User, Claim and Assessment services are all different (a shared URL fails with a message naming it and the reason); the three `application-postgres.properties` name three different databases (`user_db`, `claim_db`, `assessment_db`) | system `DatabasePerServiceConfigurationTest` |
 | TC-DB-02 | Two services in one database fail on version 1, and Flyway repair only moves the failure | Claim then User on one in-memory database: **FlywayValidateException** "Migration checksum mismatch for migration version 1"; after `repair` from the User side the **Claim** migration fails the same way and no `users` table exists; one database per service migrates cleanly with default settings | `DatabasePerServiceConfigurationTest` (in-memory H2 only) |
@@ -881,7 +883,7 @@ Start the three services in order (`.\microservices\scripts\start-all.ps1`, or t
 | 13 | `GET /api/v1/officer/claims/{claimId}/assessments` | `CLAIM` | 200; entries `NOTE`, `APPROVED`, `SETTLED`. |
 | 14 | `GET /api/v1/claims/{claimId}/history` and `.../assignments` | `CLAIM` | 200; status rows SUBMITTED, UNDER_REVIEW, MORE_INFO_REQUIRED, UNDER_REVIEW, APPROVED, SETTLED; one assignment row for the officer, `actor` = the manager. |
 
-The same flow as a PowerShell script is `microservices\scripts\smoke-test.ps1` (section 12 gives its real result).
+The same flow as a PowerShell script is `microservices\scripts\smoke-test.ps1` (section 12 gives its real result). A request-by-request version of the whole journey with real responses is in sections 15 and 18.
 
 ## 12. Coverage and verified results
 
@@ -940,7 +942,8 @@ Not covered by any automated test: a forced `500 INTERNAL_ERROR`; **PostgreSQL**
 
 Filled in only from a real run. The totals come from `.\mvnw.cmd -B -f microservices/pom.xml clean test` and the Surefire reports of each module. The owner's own User and Claim services were running from the repository's `target` folders at the time, so every build and test run below was done on a **copy of the sources in a scratch folder** (a path mapped to a short drive letter, because the Windows path was too long for Maven there) and not in the repository's own `target` folders; the repository's files were not touched by the runs.
 
-- **After Phase 1 (latest run): `clean test` on the microservices: BUILD SUCCESS, 580 tests, 0 failures, 0 errors, 0 skipped**, H2 in PostgreSQL mode only. By module and class:
+- **Update 2026-10-27 (supersedes the two bullets marked superseded below, for commit `ee90578`):** `clean test` on the microservices, in a scratch copy (the owner's services were running): **BUILD FAILURE, 580 tests run, 578 passed, 2 failed, 0 errors, 0 skipped.** claims-common 54, user-service 62, claim-service 201 and assessment-service 90 all passed; system-tests ran 173 with 2 failures, both in `JwtSecretConfigurationTest` (`everyServiceReadsTheSameEnvironmentVariableAndHasNoDefaultSecret` and `noPackagedConfigurationFileOfAnyServiceContainsASecretOrACredentialLiteral`). **Cause:** the committed `application.properties` of the three services write `claims.security.jwt.secret` with a literal fallback after `JWT_SECRET:` (the value is deliberately not repeated here), so TC-CFG-01 and TC-CFG-03 fail, and a service started without `JWT_SECRET` starts instead of refusing (observed: a claim-service jar started with no `JWT_SECRET` answered health UP). The monolith: `mvnw test`, 142 tests, 0 failures. Real jars on spare ports: `smoke-test.ps1` **81 of 81 PASS** (twice). The live runs of sections 14 to 20 (two flows, 130 role-matrix cells, 210 scenarios, 16 downstream-failure cases, the Postman definitions) all matched, except that case OUT-1.3 returned 502 where 503 was expected (the documented design, section 17.2). Not run: PostgreSQL. While this was being done, the three `application.properties` were edited and then committed by someone other than the author of this document (commit `b33e4a3`, 2026-10-27 09:43; not pushed, `main` is 2 commits ahead of `origin/main`). That commit comments out the H2 defaults and hard-codes a PostgreSQL datasource with a **literal database password in each of the three files**, which contradicts `CLAUDE.md` sections 6 and 9: the password must be treated as exposed, and the commit should not be pushed as it is. It was **not tested** (everything in this update ran on `ee90578`); `docs/architecture.md` section 11.3 describes it without the values.
+- **After Phase 1 (earlier run, 2026-10-26; superseded for commit `ee90578` by the update above): `clean test` on the microservices: BUILD SUCCESS, 580 tests, 0 failures, 0 errors, 0 skipped**, H2 in PostgreSQL mode only. By module and class:
   - claims-common 54: DownstreamClientTest 11, GlobalExceptionHandlerTest 4, ClaimVisibilityTest 7, JwtUtilTest 14, SecurityChainTest 18.
   - user-service 62: AdminBootstrapTest 5, AuthTest 16, DemoUsersTest 6, DemoUsersUnitTest 5, UserActiveFlagTest 11, UserAdminTest 15, UserMigrationTest 1, UserSecurityTest 3.
   - claim-service 201: AssignmentRulesTest 14, ClaimCreationTest 11, ClaimDomainTest 14, ClaimListTest 12, ClaimMigrationTest 1, ClaimSecurityTest 14, ClaimUpdateTest 16, ConcurrentTransitionTest 7, DefaultMarketTest 1, EndpointContractTest 35, HistoryEndpointsTest 6, InternalClaimApiTest 37, ManagementReportTest 11, MarketValidationTest 3, OfficerSearchTest 6, UnassignedFilterTest 8, UserClientTest 5.
@@ -950,5 +953,2819 @@ Filled in only from a real run. The totals come from `.\mvnw.cmd -B -f microserv
 - **Original monolith:** `.\mvnw.cmd test` at the repository root, on the same kind of copy: **BUILD SUCCESS, 142 tests, 0 failures, 0 errors, 0 skipped** (16 test classes). The monolith's code and tests were not changed (git shows its tree as committed); the only change near it was removing the stray, untracked `src/main/java/UserServiceApplication.java` that the IDE had put there (approved), which the monolith had been compiling into its own classes without harm.
 - **Real jars, re-run on the final code (after the independent review's fixes):** jars rebuilt with `-DskipTests clean package`, started by `start-all.ps1` on spare ports, `smoke-test.ps1` **81 of 81 checks PASS, exit code 0**; by hand on the same jars: an administrator reviewing an unassigned claim as `typo.name` or as a claimant got 400 `INVALID_OFFICER` and the claim stayed unassigned (as `officer1`: 200), a `PATCH` with a line break gave 200, and the Assessment Service log held one line per administrator request (TC-INT-07 to TC-INT-09). The earlier run below was made before those fixes.
 - **Real jars, 2026-10-26 (first run, before the review's fixes):** the three runnable jars were built (`-DskipTests clean package`, BUILD SUCCESS) and started **by `start-all.ps1 -SkipBuild`** on spare ports 18181 (Claim), 18182 (Assessment) and 18185 (User), with H2 databases and no `JWT_SECRET` set (the script generated one for the run). After the script finished, `JWT_SECRET`, `CLAIM_SERVICE_URL` and `USER_SERVICE_URL` were unchanged in the PowerShell session. Observed: health `UP` on all three; `GET /actuator/env` 401 without a token; `/v3/api-docs` 200 with the titles *User Service API*, *Claim Service API*, *Assessment Service API* and Swagger UI 200 on each; the four demo users log in with the documented password and get `ADMIN`, `CLAIMS_OFFICER`, `MANAGER`, `CLAIMANT` (`expiresIn` 3600, `tokenType` Bearer); Flyway applied User V1 and V2, Claim V1 to V5 and Assessment V1 and V2 on start-up; searching the three logs for the demo password and for token text found nothing. **`smoke-test.ps1`: 81 checks** (78 check lines plus the health check run for three services). The first run passed 80 of 81: one comparison in the script was a text comparison of `2200.00` with `2200` (the service's answer was right; the script now compares numerically). A second run on the same running instances, after that fix, **passed all 81** (and shows the script can be re-run: it counts before and after instead of assuming an empty system). The processes were stopped afterwards with `stop-all.ps1`; the owner's services on 8185 and 8787 were not touched and not called.
-- **Startup without a secret:** the packaged Claim Service jar started with no `JWT_SECRET` in the environment **refused to start**: the message says that `claims.security.jwt.secret` (environment variable `JWT_SECRET`) must be at least 32 characters and the same for every service, the process exited, and port 18199 was never opened.
+- **Startup without a secret (observed 2026-10-26; superseded: not reproduced on 2026-10-27, see the update above):** the packaged Claim Service jar started with no `JWT_SECRET` in the environment **refused to start**: the message says that `claims.security.jwt.secret` (environment variable `JWT_SECRET`) must be at least 32 characters and the same for every service, the process exited, and port 18199 was never opened.
 - **Not tested:** PostgreSQL for the new migrations (User V2, Claim V5, Assessment V2 ran on H2 only, including over pre-populated old data, and the concurrency tests run on H2 only); an **expired token against the running jars** (expired, foreign-secret and old-role tokens are refused in the unit, MockMvc and system tests only); the `DOWN` health answer; the Swagger UI **Authorize** button; the default Claim Service port 8181 and the owner's own local configuration (the runs used spare ports and in-memory databases); Kafka (**not implemented**; planned as a separate later phase). Authentication is implemented and tested as above; its limits are in `README.md`.
+
+## 13. PostgreSQL setup
+
+> **Status, stated plainly.** Nothing in this section was run against PostgreSQL on 2026-10-27. The statements and commands are derived from `application-postgres.properties`, the `application.properties` of commit `ee90578` (driven by environment variables; the current one differs, see the conflict note in 13.3) and the Flyway migrations, and the log lines quoted in 13.5 were observed on the default **H2** databases. Earlier sessions ran Claim V1 to V4 and User V1 on a local PostgreSQL 17.6 (journal Entries 14 and 15). Claim V5, User V2 and Assessment V2, claim creation (`nextval`), the transitions, `SELECT ... FOR UPDATE` locking, timestamp round trips, the concurrency tests and the whole Assessment database have **never** been run on PostgreSQL. Do not describe PostgreSQL as verified until the checks in 13.5 have been run and their results written down.
+
+### 13.1 One database per service
+
+Each service owns its own database; no service reads another's tables. **Never put two services in one database**: every service has a Flyway version 1 with different content and a database holds one `flyway_schema_history`, so the second service to start fails with "Migration checksum mismatch for migration version 1". Do not run Flyway `repair` or `clean` to fix that (repair only moves the failure to the other service, `clean` deletes data); give the service its own database.
+
+| Service | Database | Flyway versions applied on first start | Tables and sequences it creates |
+|---|---|---|---|
+| `user-service` (8185) | `user_db` | V1, V2 | `users` |
+| `claim-service` (8181) | `claim_db` | V1 to V5 | `claims`, `claim_status_history`, `claim_assignment_history`, `claim_update_history`, sequence `claim_number_seq` |
+| `assessment-service` (8182) | `assessment_db` | V1, V2 | `claim_assessments`, `information_requests`, sequence `information_request_number_seq` |
+
+Each database also gets Flyway's own `flyway_schema_history` table.
+
+### 13.2 CREATE DATABASE scripts
+
+Run as a PostgreSQL superuser, for example `psql -h localhost -U postgres`. **Ask before running these on a server that other people use**, and never `DROP`, `repair` or `clean` a database you were not asked to change.
+
+```sql
+-- the three databases, one per service
+CREATE DATABASE user_db;
+CREATE DATABASE claim_db;
+CREATE DATABASE assessment_db;
+```
+
+Optional: an application role that owns the three databases, so the services do not connect as a superuser. On PostgreSQL 15 and later an ordinary role cannot create tables in the `public` schema of a database it does not own, so the role is made the **owner**. Choose the password yourself and keep it out of every file in the repository (use the environment variables in 13.3).
+
+```sql
+CREATE ROLE claims_app LOGIN PASSWORD '<choose-a-password>';
+CREATE DATABASE user_db       OWNER claims_app;
+CREATE DATABASE claim_db      OWNER claims_app;
+CREATE DATABASE assessment_db OWNER claims_app;
+```
+
+Check that they exist:
+
+```sql
+SELECT datname, pg_get_userbyid(datdba) AS owner
+FROM pg_database
+WHERE datname IN ('user_db', 'claim_db', 'assessment_db')
+ORDER BY datname;      -- expect three rows
+```
+
+### 13.3 Configuration and environment variables
+
+Every setting comes from the environment; **no password or secret is ever written in a properties file** (`JwtSecretConfigurationTest` is written to fail the build if one is).
+
+| Service | `*_DB_URL` | `*_DB_USERNAME` | `*_DB_PASSWORD` |
+|---|---|---|---|
+| user-service | `USER_DB_URL=jdbc:postgresql://localhost:5432/user_db` | `USER_DB_USERNAME` | `USER_DB_PASSWORD` |
+| claim-service | `CLAIM_DB_URL=jdbc:postgresql://localhost:5432/claim_db` | `CLAIM_DB_USERNAME` | `CLAIM_DB_PASSWORD` |
+| assessment-service | `ASSESSMENT_DB_URL=jdbc:postgresql://localhost:5432/assessment_db` | `ASSESSMENT_DB_USERNAME` | `ASSESSMENT_DB_PASSWORD` |
+
+Also needed by all three: the **same** `JWT_SECRET` (at least 32 characters). Optional: `USER_SERVICE_URL` (Claim Service, default `http://localhost:8185`), `CLAIM_SERVICE_URL` (Assessment Service, default `http://localhost:8181`), `DEMO_USERS=false` to switch the demo users off.
+
+There are two equivalent ways to select PostgreSQL:
+
+* **Environment only** (simplest): set the three variables of a service. The packaged `application.properties` reads them (`${USER_DB_URL:<H2 default>}` and so on) and the PostgreSQL driver is on the runtime classpath, so the URL is enough.
+* **The `postgres` profile**: `SPRING_PROFILES_ACTIVE=postgres` (or `--spring.profiles.active=postgres`). `application-postgres.properties` then defaults the URL to the database names above and **requires** `*_DB_USERNAME` and `*_DB_PASSWORD` (no default: the service stops with an unresolved placeholder if one is missing).
+
+PowerShell, one session for all three services (each service reads only its own `*_DB_*` variables, so setting all nine is safe). The secret is generated and the password is typed, so neither is written to a file or to the command history:
+
+```powershell
+# one signing secret for all three services (at least 32 characters); never printed or saved
+$bytes = New-Object byte[] 48
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$env:JWT_SECRET = -join ($bytes | ForEach-Object { $_.ToString('x2') })
+
+# the database password is typed, not written down
+$secure = Read-Host 'PostgreSQL password for claims_app' -AsSecureString
+$plain  = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+
+$env:USER_DB_URL       = 'jdbc:postgresql://localhost:5432/user_db'
+$env:USER_DB_USERNAME  = 'claims_app'
+$env:USER_DB_PASSWORD  = $plain
+$env:CLAIM_DB_URL      = 'jdbc:postgresql://localhost:5432/claim_db'
+$env:CLAIM_DB_USERNAME = 'claims_app'
+$env:CLAIM_DB_PASSWORD = $plain
+$env:ASSESSMENT_DB_URL      = 'jdbc:postgresql://localhost:5432/assessment_db'
+$env:ASSESSMENT_DB_USERNAME = 'claims_app'
+$env:ASSESSMENT_DB_PASSWORD = $plain
+```
+
+The same in `cmd`: `set USER_DB_URL=jdbc:postgresql://localhost:5432/user_db`, `set USER_DB_USERNAME=claims_app`, `set USER_DB_PASSWORD=<password>`, and likewise for `CLAIM_DB_*` and `ASSESSMENT_DB_*`.
+
+> **Conflict with the current repository.** Everything above describes the configuration as committed in `ee90578`, which reads these variables. Commit `b33e4a3` (the current `main`, not pushed) replaced it: `user-service` and `claim-service` now **hard-code** the datasource (databases `user_db` and `claimdb`, a user name and a **literal password**), and `assessment-service` hard-codes the same kind of values as the fallbacks of `${ASSESSMENT_DB_URL:...}`, `${ASSESSMENT_DB_USERNAME:...}` and `${ASSESSMENT_DB_PASSWORD:...}` (database `assessmentdb`). In the first two files **the environment variables of this section have no effect**, and the database names differ from the `claim_db` and `assessment_db` of 13.1 and 13.2. To follow this section as written, the datasource lines of those files must read the variables again (the H2 lines that did are still in the files, commented out). The password in the committed files must be treated as exposed (it is in the repository history and in a OneDrive-synced folder), and should be changed before anything is pushed. These files were not changed by this document. See `docs/architecture.md` section 11.3.
+
+### 13.4 Start the services on PostgreSQL
+
+Start in dependency order: user, claim, assessment. `start-all.ps1` starts the three processes from the current session, so they inherit the variables above:
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = 'postgres'        # optional, see 13.3
+.\microservices\scripts\start-all.ps1 -SkipBuild
+```
+
+or by hand, one terminal each (the same environment in every terminal):
+
+```powershell
+java -jar microservices\user-service\target\user-service-0.0.1-SNAPSHOT-exec.jar --spring.profiles.active=postgres
+java -jar microservices\claim-service\target\claim-service-0.0.1-SNAPSHOT-exec.jar --spring.profiles.active=postgres
+java -jar microservices\assessment-service\target\assessment-service-0.0.1-SNAPSHOT-exec.jar --spring.profiles.active=postgres
+```
+
+**Before the first start against a database that already holds data, take a backup.** Claim V5 renames a status in `claims` and in `claim_status_history`, renames three columns and adds others; User V2 renames a role; Assessment V2 adds a column. These migrations have only ever run on H2, including over old rows (`ClaimMigrationTest`, `UserMigrationTest`, `AssessmentMigrationTest`).
+
+### 13.5 Startup verification steps
+
+Run these in order and write the real results next to them; none has been run on PostgreSQL yet.
+
+| # | Check | Command | Expected | Result on PostgreSQL |
+|---|---|---|---|---|
+| 1 | The role can reach each database | `psql -h localhost -U claims_app -d user_db -c "select 1"` (and `claim_db`, `assessment_db`) | one row, `1` | not run |
+| 2 | Flyway ran on the right database | the service log (below) | `Database: jdbc:postgresql://localhost:5432/<db> (PostgreSQL ...)`, one `Migrating schema "public" to version ...` line per version, then `Successfully applied N migrations` | not run |
+| 3 | Health | `Invoke-RestMethod http://localhost:8185/actuator/health` (and 8181, 8182) | `status` is `UP` (`DOWN` with HTTP 503 when the database cannot be reached) | not run |
+| 4 | The migration history is complete and clean | `select installed_rank, version, description, success from flyway_schema_history order by installed_rank;` in each database | the rows listed below, all `success = t` | not run |
+| 5 | The tables exist, in the right database | `\dt` in each database | the tables of 13.1 and nothing from another service | not run |
+| 6 | Demo users were created (User Service, `DEMO_USERS` on) | `select username, role, active from users order by username;` | `admin1`, `claimant1`, `manager1`, `officer1`, all active, and a `DEMO USERS ARE ENABLED` WARN line in the log | not run |
+| 7 | Login works and a token is accepted by another service | section 14.3, then `GET /api/v1/claims` on the Claim Service | 200 | not run |
+| 8 | The claim sequence works | create one claim (section 15, step F1-01), then `select claim_id, claimant_id, status from claims;` and `select last_value from claim_number_seq;` | `CLM-<year>-000101`, `claimant1`, `SUBMITTED`; `101` on a fresh database | not run |
+| 9 | Data survives a restart (unlike H2) | stop and start `claim-service`, `GET /api/v1/claims/<claimId>` as `claimant1` | 200, and the log shows no `Migrating` lines the second time | not run |
+| 10 | Row locking and the concurrency behaviour | there is no PostgreSQL check; the concurrency tests run on H2 only | n/a | **not verified, do not rely on it** |
+
+What the log shows on the default H2 databases (observed 2026-10-27; on PostgreSQL expect the same lines with the PostgreSQL URL on the first one):
+
+```text
+user-service        Database: jdbc:h2:mem:userdb (H2 2.2)
+                    Migrating schema "public" to version "1 - create users"
+                    Migrating schema "public" to version "2 - claims officer role and active flag"
+                    Successfully applied 2 migrations to schema "public", now at version v2
+claim-service       Database: jdbc:h2:mem:claimdb (H2 2.2)
+                    Migrating schema "public" to version "1 - create claims schema"
+                    Migrating schema "public" to version "2 - create claim status history"
+                    Migrating schema "public" to version "3 - create claim assignment history"
+                    Migrating schema "public" to version "4 - add claims created by"
+                    Migrating schema "public" to version "5 - claim model phase1"
+                    Successfully applied 5 migrations to schema "public", now at version v5
+assessment-service  Database: jdbc:h2:mem:assessmentdb (H2 2.2)
+                    Migrating schema "public" to version "1 - create claim assessments"
+                    Migrating schema "public" to version "2 - information requests and assessment kind"
+                    Successfully applied 2 migrations to schema "public", now at version v2
+```
+
+The `flyway_schema_history` rows of check 4 are therefore: `user_db` versions 1 and 2; `claim_db` versions 1 to 5; `assessment_db` versions 1 and 2, with the descriptions above.
+
+### 13.6 If a start-up fails
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| `Migration checksum mismatch for migration version 1` | two services share one database | read-only diagnosis first: `select version, description, checksum from flyway_schema_history;`. Give each service its own database. **Do not run `repair` or `clean`.** |
+| `database "claim_db" does not exist` | the `CREATE DATABASE` in 13.2 was not run | create it (after asking, on a shared server) |
+| `password authentication failed` | wrong `*_DB_USERNAME` or `*_DB_PASSWORD` in this session | retype the password; check the variable names carry the service prefix |
+| `Could not resolve placeholder 'USER_DB_USERNAME'` | the `postgres` profile is active and the variable is not set | set `*_DB_USERNAME` and `*_DB_PASSWORD`, or drop the profile and use the URL variable only |
+| `permission denied for schema public` | PostgreSQL 15 or later and the role does not own the database | create the database `OWNER claims_app` (13.2) |
+| `claims.security.jwt.secret ... must be set to at least 32 characters` | `JWT_SECRET` missing or short | set the same value (at least 32 characters) for every service; see the observation in section 12 about a fallback value in the committed properties |
+| The environment variables seem to be ignored | the committed `application.properties` hard-code a datasource (commit `b33e4a3`) | see the conflict note in 13.3 |
+| `/actuator/health` answers 503 `DOWN` | the database cannot be reached | check step 1 |
+
+## 14. Demo users and login examples
+
+### 14.1 The eight users
+
+All eight use the documented public demo password `password123` in this document. It is demonstration data: anyone who can read the repository can log in as an administrator while the demo users are on (`DEMO_USERS` unset or `true`), which makes the system a demo and not a secure deployment. Set `DEMO_USERS=false` for anything else.
+
+| Role | Users | How they exist |
+|---|---|---|
+| ADMIN | `admin1`, `admin2` | `admin1` is **seeded** at start-up by `DemoUsers`; `admin2` is created by `admin1` (14.2) |
+| CLAIMS_OFFICER | `officer1`, `officer2` | `officer1` seeded; `officer2` created by `admin1` |
+| MANAGER | `manager1`, `manager2` | `manager1` seeded; `manager2` created by `admin1` |
+| CLAIMANT | `claimant1`, `claimant2` | `claimant1` seeded; `claimant2` created by `admin1` (or registered with `POST /api/v1/auth/register`) |
+
+**Only the four `...1` users are seeded.** `DemoUsers` creates exactly `admin1`, `officer1`, `manager1` and `claimant1`, and `CLAUDE.md` section 4a forbids adding any other default credential or default administrator. The four `...2` users therefore do not exist after a start-up: create them once with the requests in 14.2 (this is Step 2 of the Swagger order in section 18). With the default in-memory H2 database they disappear when the User Service stops and must be created again; on PostgreSQL they persist. Making them seeded users would be a code change to `DemoUsers.java` and a change to that rule; it was not made.
+
+### 14.2 Create the four extra users (as `admin1`)
+
+`POST /api/v1/users` is ADMIN-only (`UserAccessRules`). Usernames are 3 to 50 characters of lower-case letters, digits, `.`, `_` and `-`; the password is 8 to 72 bytes. Log in as `admin1` first (14.3) and send `Authorization: Bearer <admin1 token>`. Real requests and responses:
+
+**C-admin2. Create admin2 (ADMIN)**
+
+User Service, as admin1: `POST /api/v1/users`
+
+Request body:
+
+```json
+{
+  "username": "admin2",
+  "password": "password123",
+  "role": "ADMIN"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "username": "admin2",
+  "role": "ADMIN",
+  "active": true,
+  "createdAt": "2026-10-27T04:21:34.985801500Z"
+}
+```
+
+**C-officer2. Create officer2 (CLAIMS_OFFICER)**
+
+User Service, as admin1: `POST /api/v1/users`
+
+Request body:
+
+```json
+{
+  "username": "officer2",
+  "password": "password123",
+  "role": "CLAIMS_OFFICER"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "username": "officer2",
+  "role": "CLAIMS_OFFICER",
+  "active": true,
+  "createdAt": "2026-10-27T04:21:35.135680500Z"
+}
+```
+
+**C-manager2. Create manager2 (MANAGER)**
+
+User Service, as admin1: `POST /api/v1/users`
+
+Request body:
+
+```json
+{
+  "username": "manager2",
+  "password": "password123",
+  "role": "MANAGER"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "username": "manager2",
+  "role": "MANAGER",
+  "active": true,
+  "createdAt": "2026-10-27T04:21:35.202411400Z"
+}
+```
+
+**C-claimant2. Create claimant2 (CLAIMANT)**
+
+User Service, as admin1: `POST /api/v1/users`
+
+Request body:
+
+```json
+{
+  "username": "claimant2",
+  "password": "password123",
+  "role": "CLAIMANT"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "username": "claimant2",
+  "role": "CLAIMANT",
+  "active": true,
+  "createdAt": "2026-10-27T04:21:35.266241Z"
+}
+```
+
+### 14.3 Login examples for all eight users
+
+`POST /api/v1/auth/login` on the User Service (8185 by default). It needs no token. The response carries the `accessToken` (shown here as `<JWT>`), `expiresIn` in seconds and the `role` the token holds. Real requests and responses:
+
+**L1. Log in as admin1**
+
+User Service, without a token: `POST /api/v1/auth/login`
+
+Request body:
+
+```json
+{
+  "username": "admin1",
+  "password": "password123"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "accessToken": "<JWT>",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "username": "admin1",
+  "role": "ADMIN"
+}
+```
+
+**L2. Log in as admin2**
+
+User Service, without a token: `POST /api/v1/auth/login`
+
+Request body:
+
+```json
+{
+  "username": "admin2",
+  "password": "password123"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "accessToken": "<JWT>",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "username": "admin2",
+  "role": "ADMIN"
+}
+```
+
+**L3. Log in as officer1**
+
+User Service, without a token: `POST /api/v1/auth/login`
+
+Request body:
+
+```json
+{
+  "username": "officer1",
+  "password": "password123"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "accessToken": "<JWT>",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "username": "officer1",
+  "role": "CLAIMS_OFFICER"
+}
+```
+
+**L4. Log in as officer2**
+
+User Service, without a token: `POST /api/v1/auth/login`
+
+Request body:
+
+```json
+{
+  "username": "officer2",
+  "password": "password123"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "accessToken": "<JWT>",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "username": "officer2",
+  "role": "CLAIMS_OFFICER"
+}
+```
+
+**L5. Log in as manager1**
+
+User Service, without a token: `POST /api/v1/auth/login`
+
+Request body:
+
+```json
+{
+  "username": "manager1",
+  "password": "password123"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "accessToken": "<JWT>",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "username": "manager1",
+  "role": "MANAGER"
+}
+```
+
+**L6. Log in as manager2**
+
+User Service, without a token: `POST /api/v1/auth/login`
+
+Request body:
+
+```json
+{
+  "username": "manager2",
+  "password": "password123"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "accessToken": "<JWT>",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "username": "manager2",
+  "role": "MANAGER"
+}
+```
+
+**L7. Log in as claimant1**
+
+User Service, without a token: `POST /api/v1/auth/login`
+
+Request body:
+
+```json
+{
+  "username": "claimant1",
+  "password": "password123"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "accessToken": "<JWT>",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "username": "claimant1",
+  "role": "CLAIMANT"
+}
+```
+
+**L8. Log in as claimant2**
+
+User Service, without a token: `POST /api/v1/auth/login`
+
+Request body:
+
+```json
+{
+  "username": "claimant2",
+  "password": "password123"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "accessToken": "<JWT>",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "username": "claimant2",
+  "role": "CLAIMANT"
+}
+```
+
+To get all eight tokens in PowerShell (the same pattern as the sequence in `docs/architecture.md` section 10):
+
+```powershell
+$users = 'admin1', 'admin2', 'officer1', 'officer2', 'manager1', 'manager2', 'claimant1', 'claimant2'
+$token = @{}
+foreach ($name in $users) {
+    $r = Invoke-RestMethod -Method Post -Uri 'http://localhost:8185/api/v1/auth/login' -ContentType 'application/json' `
+        -Body (@{ username = $name; password = 'password123' } | ConvertTo-Json)
+    $token[$name] = $r.accessToken
+}
+$headers = @{ Authorization = "Bearer $($token['officer1'])" }     # for example, to call as officer1
+```
+
+Wrong password, unknown user and a deactivated user all give the same `401 INVALID_CREDENTIALS` (cases API-2.4 to API-2.6 in section 17); the user name is matched case-insensitively (API-2.2).
+
+### 14.4 Register, who am I, list and get (User Service)
+
+**UM1. Register a new claimant**
+
+User Service, without a token: `POST /api/v1/auth/register`
+
+Request body:
+
+```json
+{
+  "username": "mei.tan",
+  "password": "correct-horse-battery"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "username": "mei.tan",
+  "role": "CLAIMANT",
+  "active": true,
+  "createdAt": "2026-10-27T04:21:35.832268900Z"
+}
+```
+
+**UM2. Who am I**
+
+User Service, as claimant1: `GET /api/v1/users/me`
+
+Response `200`:
+
+```json
+{
+  "username": "claimant1",
+  "role": "CLAIMANT",
+  "active": true,
+  "createdAt": "2026-10-27T04:19:33.094551Z"
+}
+```
+
+**UM3. List users, first page of 5**
+
+User Service, as admin1: `GET /api/v1/users?page=0&size=5`
+
+Response `200`:
+
+```json
+{
+  "content": [
+    {
+      "username": "admin1",
+      "role": "ADMIN",
+      "active": true,
+      "createdAt": "2026-10-27T04:19:32.686329Z"
+    },
+    {
+      "username": "admin2",
+      "role": "ADMIN",
+      "active": true,
+      "createdAt": "2026-10-27T04:21:34.985802Z"
+    },
+    {
+      "username": "claimant1",
+      "role": "CLAIMANT",
+      "active": true,
+      "createdAt": "2026-10-27T04:19:33.094551Z"
+    },
+    {
+      "username": "claimant2",
+      "role": "CLAIMANT",
+      "active": true,
+      "createdAt": "2026-10-27T04:21:35.266241Z"
+    },
+    {
+      "username": "manager1",
+      "role": "MANAGER",
+      "active": true,
+      "createdAt": "2026-10-27T04:19:32.995718Z"
+    }
+  ],
+  "page": 0,
+  "size": 5,
+  "totalElements": 9,
+  "totalPages": 2
+}
+```
+
+**UM4. Get one user**
+
+User Service, as admin1: `GET /api/v1/users/officer2`
+
+Response `200`:
+
+```json
+{
+  "username": "officer2",
+  "role": "CLAIMS_OFFICER",
+  "active": true,
+  "createdAt": "2026-10-27T04:21:35.135681Z"
+}
+```
+
+Change role and activate or deactivate are shown in section 18, steps 14 and 15.
+
+## 15. Complete end-to-end flows
+
+Both flows were executed against freshly started services (jars built from commit `ee90578`, in-memory H2, spare ports). **Every request and response below is a real one**; only the access token is shortened. IDs and timestamps are from that run (a fresh database starts at `CLM-<year>-000101` and `IR-<year>-000001`): always use the values your own run returns. The examples show the method and path only; the run used the spare ports 28185 (User), 28181 (Claim) and 28182 (Assessment) instead of the defaults 8185, 8181 and 8182.
+
+Preconditions: the eight users of section 14 exist and each has logged in. The step IDs (F1-01 and so on) are used by sections 18 and 20.
+
+### 15.1 Flow 1: claimant1 submits, manager1 assigns, officer1 reviews, asks, claimant1 answers, officer1 approves and settles
+
+| Step | Who | Service | Call | Result |
+|---|---|---|---|---|
+| F1-01 | claimant1 | Claim | `POST /api/v1/claims` | 201, `SUBMITTED`, `claimId` generated, `claimantId` = `claimant1` |
+| F1-02 | claimant1 | Claim | `GET /api/v1/claims/{claimId}` | 200 |
+| F1-03 | claimant1 | Claim | `GET /api/v1/claims` | 200, own claim only |
+| F1-04 | claimant1 | Claim | `PATCH /api/v1/claims/{claimId}` | 200, amount corrected while `SUBMITTED` |
+| F1-05 | claimant1 | Claim | `GET /api/v1/claims/{claimId}/updates` | 200, one edit recorded |
+| F1-06 | officer1 | Claim | `GET /api/v1/officer/claims?assigned=false...` | 200, the claim is in the queue |
+| F1-07 | manager1 | Claim | `POST /api/v1/officer/claims/{claimId}/assign` | 200, still `SUBMITTED`, assigned to officer1 |
+| F1-08 | manager1 | Claim | `GET /api/v1/claims/{claimId}/assignments` | 200, `actor` = manager1 |
+| F1-09 | officer1 | Assessment | `POST /api/v1/officer/claims/{claimId}/review` | 200, `UNDER_REVIEW` |
+| F1-10 | officer1 | Assessment | `POST /api/v1/officer/claims/{claimId}/information-requests` | 201, `OPEN`; claim `MORE_INFO_REQUIRED` |
+| F1-11 | claimant1 | Assessment | `GET /api/v1/claims/{claimId}/information-requests` | 200 |
+| F1-12 | claimant1 | Assessment | `POST /api/v1/claims/{claimId}/information` | 200, `ANSWERED`; claim back to `UNDER_REVIEW` by itself |
+| F1-13 | officer1 | Assessment | `POST /api/v1/officer/claims/{claimId}/decision` | 200, `APPROVED`, `approvedAmount` 2200.00 |
+| F1-14 | manager1 | Claim | `GET /api/v1/management/summary` | 200, the claim is outstanding at its approved amount |
+| F1-15 | officer1 | Assessment | `POST /api/v1/officer/claims/{claimId}/settlement` | 200, `SETTLED` |
+| F1-16 to F1-18 | claimant1, officer1 | Claim, Assessment | final claim, status history, assessment history | 200 |
+
+**F1-01. claimant1 submits a claim**
+
+Claim Service, as claimant1: `POST /api/v1/claims`
+
+Request body:
+
+```json
+{
+  "claimantName": "Asha Rao",
+  "claimantEmail": "asha.rao@example.com",
+  "policyNumber": "POL-2026-0001",
+  "market": "SG",
+  "claimType": "MOTOR",
+  "incidentDescription": "Rear-ended at a junction on Orchard Road",
+  "incidentDate": "2026-10-20",
+  "claimedAmount": 2400.00,
+  "currency": "INR"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "id": 1,
+  "claimId": "CLM-2026-000101",
+  "claimantId": "claimant1",
+  "claimantName": "Asha Rao",
+  "claimantEmail": "asha.rao@example.com",
+  "policyNumber": "POL-2026-0001",
+  "market": "SG",
+  "claimType": "MOTOR",
+  "incidentDescription": "Rear-ended at a junction on Orchard Road",
+  "incidentDate": "2026-10-20",
+  "claimedAmount": 2400.00,
+  "approvedAmount": null,
+  "currency": "INR",
+  "status": "SUBMITTED",
+  "assignedOfficerId": null,
+  "decisionReason": null,
+  "decidedAt": null,
+  "settledAt": null,
+  "createdAt": "2026-10-27T04:21:36.276722400Z",
+  "updatedAt": "2026-10-27T04:21:36.276722400Z"
+}
+```
+
+**F1-02. claimant1 reads the claim back**
+
+Claim Service, as claimant1: `GET /api/v1/claims/CLM-2026-000101`
+
+Response `200`:
+
+```json
+{
+  "id": 1,
+  "claimId": "CLM-2026-000101",
+  "claimantId": "claimant1",
+  "claimantName": "Asha Rao",
+  "claimantEmail": "asha.rao@example.com",
+  "policyNumber": "POL-2026-0001",
+  "market": "SG",
+  "claimType": "MOTOR",
+  "incidentDescription": "Rear-ended at a junction on Orchard Road",
+  "incidentDate": "2026-10-20",
+  "claimedAmount": 2400.00,
+  "approvedAmount": null,
+  "currency": "INR",
+  "status": "SUBMITTED",
+  "assignedOfficerId": null,
+  "decisionReason": null,
+  "decidedAt": null,
+  "settledAt": null,
+  "createdAt": "2026-10-27T04:21:36.276722Z",
+  "updatedAt": "2026-10-27T04:21:36.276722Z"
+}
+```
+
+**F1-03. claimant1 lists their own claims**
+
+Claim Service, as claimant1: `GET /api/v1/claims?page=0&size=5`
+
+Response `200`:
+
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "claimId": "CLM-2026-000101",
+      "claimantId": "claimant1",
+      "claimantName": "Asha Rao",
+      "policyNumber": "POL-2026-0001",
+      "market": "SG",
+      "claimType": "MOTOR",
+      "claimedAmount": 2400.00,
+      "approvedAmount": null,
+      "currency": "INR",
+      "status": "SUBMITTED",
+      "assignedOfficerId": null,
+      "createdAt": "2026-10-27T04:21:36.276722Z"
+    }
+  ],
+  "page": 0,
+  "size": 5,
+  "totalElements": 1,
+  "totalPages": 1
+}
+```
+
+**F1-04. claimant1 corrects the amount while the claim is still SUBMITTED**
+
+Claim Service, as claimant1: `PATCH /api/v1/claims/CLM-2026-000101`
+
+Request body:
+
+```json
+{
+  "claimedAmount": 2500.00,
+  "incidentDescription": "Rear-ended at a junction on Orchard Road; the other driver left the scene"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "id": 1,
+  "claimId": "CLM-2026-000101",
+  "claimantId": "claimant1",
+  "claimantName": "Asha Rao",
+  "claimantEmail": "asha.rao@example.com",
+  "policyNumber": "POL-2026-0001",
+  "market": "SG",
+  "claimType": "MOTOR",
+  "incidentDescription": "Rear-ended at a junction on Orchard Road; the other driver left the scene",
+  "incidentDate": "2026-10-20",
+  "claimedAmount": 2500.00,
+  "approvedAmount": null,
+  "currency": "INR",
+  "status": "SUBMITTED",
+  "assignedOfficerId": null,
+  "decisionReason": null,
+  "decidedAt": null,
+  "settledAt": null,
+  "createdAt": "2026-10-27T04:21:36.276722Z",
+  "updatedAt": "2026-10-27T04:21:36.533244400Z"
+}
+```
+
+**F1-05. the edit is in the update history**
+
+Claim Service, as claimant1: `GET /api/v1/claims/CLM-2026-000101/updates`
+
+Response `200`:
+
+```json
+[
+  {
+    "claimId": "CLM-2026-000101",
+    "changedAt": "2026-10-27T04:21:36.541363Z",
+    "actor": "claimant1",
+    "changes": [
+      "incidentDescription: changed",
+      "claimedAmount: 2400.00 -> 2500.00"
+    ]
+  }
+]
+```
+
+**F1-06. officer1 finds the claim in the unassigned queue**
+
+Claim Service, as officer1: `GET /api/v1/officer/claims?assigned=false&status=SUBMITTED&page=0&size=5`
+
+Response `200`:
+
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "claimId": "CLM-2026-000101",
+      "claimantId": "claimant1",
+      "claimantName": "Asha Rao",
+      "policyNumber": "POL-2026-0001",
+      "market": "SG",
+      "claimType": "MOTOR",
+      "claimedAmount": 2500.00,
+      "approvedAmount": null,
+      "currency": "INR",
+      "status": "SUBMITTED",
+      "assignedOfficerId": null,
+      "createdAt": "2026-10-27T04:21:36.276722Z"
+    }
+  ],
+  "page": 0,
+  "size": 5,
+  "totalElements": 1,
+  "totalPages": 1
+}
+```
+
+**F1-07. manager1 assigns the claim to officer1**
+
+Claim Service, as manager1: `POST /api/v1/officer/claims/CLM-2026-000101/assign`
+
+The status stays `SUBMITTED`; the Claim Service first asks the User Service whether `officer1` is an active claims officer.
+
+Request body:
+
+```json
+{
+  "officerId": "officer1"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "claimId": "CLM-2026-000101",
+  "status": "SUBMITTED",
+  "assignedOfficerId": "officer1",
+  "updatedAt": "2026-10-27T04:21:36.726206200Z"
+}
+```
+
+**F1-08. the assignment history names the manager as the actor**
+
+Claim Service, as manager1: `GET /api/v1/claims/CLM-2026-000101/assignments`
+
+Response `200`:
+
+```json
+[
+  {
+    "claimId": "CLM-2026-000101",
+    "previousOfficerId": null,
+    "newOfficerId": "officer1",
+    "changedAt": "2026-10-27T04:21:36.723621Z",
+    "actor": "manager1"
+  }
+]
+```
+
+**F1-09. officer1 starts the review with a note**
+
+Assessment Service, as officer1: `POST /api/v1/officer/claims/CLM-2026-000101/review`
+
+No `officerId` is needed: an officer acts as the token's user.
+
+Request body:
+
+```json
+{
+  "assessmentNotes": "Photos match the description. Repair estimate still needed."
+}
+```
+
+Response `200`:
+
+```json
+{
+  "claimId": "CLM-2026-000101",
+  "status": "UNDER_REVIEW",
+  "assignedOfficerId": "officer1",
+  "updatedAt": "2026-10-27T04:21:37.351405Z"
+}
+```
+
+**F1-10. officer1 asks the claimant for more information**
+
+Assessment Service, as officer1: `POST /api/v1/officer/claims/CLM-2026-000101/information-requests`
+
+Request body:
+
+```json
+{
+  "question": "Please send the repair estimate from the workshop."
+}
+```
+
+Response `201`:
+
+```json
+{
+  "informationRequestId": "IR-2026-000001",
+  "claimId": "CLM-2026-000101",
+  "question": "Please send the repair estimate from the workshop.",
+  "status": "OPEN",
+  "requestedByOfficerId": "officer1",
+  "createdAt": "2026-10-27T04:21:37.418523700Z",
+  "answer": null,
+  "answeredAt": null
+}
+```
+
+The claim now waits for the claimant: `GET /api/v1/claims/CLM-2026-000101` returns `200` and `status` is `MORE_INFO_REQUIRED`.
+
+**F1-11. claimant1 lists the information requests of the claim**
+
+Assessment Service, as claimant1: `GET /api/v1/claims/CLM-2026-000101/information-requests`
+
+Response `200`:
+
+```json
+[
+  {
+    "informationRequestId": "IR-2026-000001",
+    "claimId": "CLM-2026-000101",
+    "question": "Please send the repair estimate from the workshop.",
+    "status": "OPEN",
+    "requestedByOfficerId": "officer1",
+    "createdAt": "2026-10-27T04:21:37.418524Z",
+    "answer": null,
+    "answeredAt": null
+  }
+]
+```
+
+**F1-12. claimant1 answers the request**
+
+Assessment Service, as claimant1: `POST /api/v1/claims/CLM-2026-000101/information`
+
+This was the last open request, so the claim returns to `UNDER_REVIEW` by itself; the officer does not call review again.
+
+Request body:
+
+```json
+{
+  "informationRequestId": "IR-2026-000001",
+  "answer": "The workshop estimate is INR 2,200 for the bumper and the rear panel."
+}
+```
+
+Response `200`:
+
+```json
+{
+  "informationRequestId": "IR-2026-000001",
+  "claimId": "CLM-2026-000101",
+  "status": "ANSWERED",
+  "answer": "The workshop estimate is INR 2,200 for the bumper and the rear panel.",
+  "answeredAt": "2026-10-27T04:21:37.535075500Z"
+}
+```
+
+The claim is back under review: `GET /api/v1/claims/CLM-2026-000101` returns `200` and `status` is `UNDER_REVIEW`.
+
+**F1-13. officer1 approves 2200.00 of the 2500.00 claimed**
+
+Assessment Service, as officer1: `POST /api/v1/officer/claims/CLM-2026-000101/decision`
+
+Request body:
+
+```json
+{
+  "decision": "APPROVED",
+  "decisionReason": "Covered under the motor policy; amount follows the workshop estimate.",
+  "approvedAmount": 2200.00,
+  "currency": "INR"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "claimId": "CLM-2026-000101",
+  "status": "APPROVED",
+  "decisionReason": "Covered under the motor policy; amount follows the workshop estimate.",
+  "approvedAmount": 2200.00,
+  "currency": "INR",
+  "decidedByOfficerId": "officer1",
+  "decidedAt": "2026-10-27T04:21:37.638378200Z",
+  "updatedAt": "2026-10-27T04:21:37.638378200Z"
+}
+```
+
+**F1-14. manager1 reads the summary: the approved claim counts at its approved amount**
+
+Claim Service, as manager1: `GET /api/v1/management/summary`
+
+Response `200`:
+
+```json
+{
+  "generatedAt": "2026-10-27T04:21:37.684314300Z",
+  "liabilityNote": "Simple estimate: for claims not yet decided, the CLAIMED amount; for APPROVED claims awaiting settlement, the APPROVED amount; settled and rejected claims are left out. Grouped by currency, with no exchange-rate conversion. It is neither the expected settlement nor a booked reserve. Not an actuarial reserve.",
+  "outstandingClaimCount": 1,
+  "outstandingLiabilityByCurrency": [
+    {
+      "currency": "INR",
+      "claimCount": 1,
+      "estimatedLiability": 2200.00
+    }
+  ],
+  "countsByStatus": {
+    "SUBMITTED": 0,
+    "UNDER_REVIEW": 0,
+    "MORE_INFO_REQUIRED": 0,
+    "APPROVED": 1,
+    "REJECTED": 0,
+    "SETTLED": 0
+  }
+}
+```
+
+**F1-15. officer1 settles the approved claim**
+
+Assessment Service, as officer1: `POST /api/v1/officer/claims/CLM-2026-000101/settlement`
+
+Request body:
+
+```json
+{
+  "settlementNote": "Paid by bank transfer."
+}
+```
+
+Response `200`:
+
+```json
+{
+  "claimId": "CLM-2026-000101",
+  "status": "SETTLED",
+  "approvedAmount": 2200.00,
+  "currency": "INR",
+  "settledByOfficerId": "officer1",
+  "settledAt": "2026-10-27T04:21:37.718493600Z",
+  "updatedAt": "2026-10-27T04:21:37.719492700Z"
+}
+```
+
+**F1-16. final state of the claim**
+
+Claim Service, as claimant1: `GET /api/v1/claims/CLM-2026-000101`
+
+Response `200`:
+
+```json
+{
+  "id": 1,
+  "claimId": "CLM-2026-000101",
+  "claimantId": "claimant1",
+  "claimantName": "Asha Rao",
+  "claimantEmail": "asha.rao@example.com",
+  "policyNumber": "POL-2026-0001",
+  "market": "SG",
+  "claimType": "MOTOR",
+  "incidentDescription": "Rear-ended at a junction on Orchard Road; the other driver left the scene",
+  "incidentDate": "2026-10-20",
+  "claimedAmount": 2500.00,
+  "approvedAmount": 2200.00,
+  "currency": "INR",
+  "status": "SETTLED",
+  "assignedOfficerId": "officer1",
+  "decisionReason": "Covered under the motor policy; amount follows the workshop estimate.",
+  "decidedAt": "2026-10-27T04:21:37.638378Z",
+  "settledAt": "2026-10-27T04:21:37.718494Z",
+  "createdAt": "2026-10-27T04:21:36.276722Z",
+  "updatedAt": "2026-10-27T04:21:37.719493Z"
+}
+```
+
+**F1-17. status history**
+
+Claim Service, as claimant1: `GET /api/v1/claims/CLM-2026-000101/history`
+
+Response `200`:
+
+```json
+[
+  {
+    "claimId": "CLM-2026-000101",
+    "fromStatus": null,
+    "toStatus": "SUBMITTED",
+    "changedAt": "2026-10-27T04:21:36.338264Z",
+    "actor": "claimant1"
+  },
+  {
+    "claimId": "CLM-2026-000101",
+    "fromStatus": "SUBMITTED",
+    "toStatus": "UNDER_REVIEW",
+    "changedAt": "2026-10-27T04:21:37.349809Z",
+    "actor": "officer1"
+  },
+  {
+    "claimId": "CLM-2026-000101",
+    "fromStatus": "UNDER_REVIEW",
+    "toStatus": "MORE_INFO_REQUIRED",
+    "changedAt": "2026-10-27T04:21:37.432366Z",
+    "actor": "officer1"
+  },
+  {
+    "claimId": "CLM-2026-000101",
+    "fromStatus": "MORE_INFO_REQUIRED",
+    "toStatus": "UNDER_REVIEW",
+    "changedAt": "2026-10-27T04:21:37.560901Z",
+    "actor": "claimant1"
+  },
+  {
+    "claimId": "CLM-2026-000101",
+    "fromStatus": "UNDER_REVIEW",
+    "toStatus": "APPROVED",
+    "changedAt": "2026-10-27T04:21:37.638378Z",
+    "actor": "officer1"
+  },
+  {
+    "claimId": "CLM-2026-000101",
+    "fromStatus": "APPROVED",
+    "toStatus": "SETTLED",
+    "changedAt": "2026-10-27T04:21:37.718494Z",
+    "actor": "officer1"
+  }
+]
+```
+
+**F1-18. assessment history (officers only)**
+
+Assessment Service, as officer1: `GET /api/v1/officer/claims/CLM-2026-000101/assessments`
+
+Response `200`:
+
+```json
+[
+  {
+    "claimId": "CLM-2026-000101",
+    "officerId": "officer1",
+    "kind": "NOTE",
+    "notes": "Photos match the description. Repair estimate still needed.",
+    "createdAt": "2026-10-27T04:21:37.245857Z"
+  },
+  {
+    "claimId": "CLM-2026-000101",
+    "officerId": "officer1",
+    "kind": "APPROVED",
+    "notes": "Covered under the motor policy; amount follows the workshop estimate.",
+    "createdAt": "2026-10-27T04:21:37.620089Z"
+  },
+  {
+    "claimId": "CLM-2026-000101",
+    "officerId": "officer1",
+    "kind": "SETTLED",
+    "notes": "Paid by bank transfer.",
+    "createdAt": "2026-10-27T04:21:37.706157Z"
+  }
+]
+```
+
+### 15.2 Flow 2: claimant2 submits, manager2 assigns to officer2, officer2 reviews and rejects
+
+| Step | Who | Service | Call | Result |
+|---|---|---|---|---|
+| F2-01 | claimant2 | Claim | `POST /api/v1/claims` | 201, `SUBMITTED` |
+| F2-02 | manager2 | Claim | `POST /api/v1/officer/claims/{claimId}/assign` | 200 |
+| F2-03 | officer2 | Assessment | `POST .../review` | 200, `UNDER_REVIEW` |
+| F2-04 | officer2 | Assessment | `POST .../decision` with `REJECTED` and no amount | 200, `REJECTED`, `approvedAmount` null |
+| F2-05 | officer2 | Assessment | `POST .../settlement` | **409**, a rejected claim can never be settled |
+| F2-06 to F2-08 | claimant2, officer2 | Claim, Assessment | final claim, status history, assessment history | 200 |
+| F2-09, F2-10 | manager2 | Claim | `GET /api/v1/management/summary`, `/officers` | 200, both flows counted |
+
+**F2-01. claimant2 submits a claim**
+
+Claim Service, as claimant2: `POST /api/v1/claims`
+
+Request body:
+
+```json
+{
+  "claimantName": "Wei Lim",
+  "claimantEmail": "wei.lim@example.com",
+  "policyNumber": "HK-PROP-0077",
+  "market": "HK",
+  "claimType": "PROPERTY",
+  "incidentDescription": "Water damage from a burst pipe in the kitchen",
+  "incidentDate": "2026-10-18",
+  "claimedAmount": 18000.00,
+  "currency": "HKD"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "id": 2,
+  "claimId": "CLM-2026-000102",
+  "claimantId": "claimant2",
+  "claimantName": "Wei Lim",
+  "claimantEmail": "wei.lim@example.com",
+  "policyNumber": "HK-PROP-0077",
+  "market": "HK",
+  "claimType": "PROPERTY",
+  "incidentDescription": "Water damage from a burst pipe in the kitchen",
+  "incidentDate": "2026-10-18",
+  "claimedAmount": 18000.00,
+  "approvedAmount": null,
+  "currency": "HKD",
+  "status": "SUBMITTED",
+  "assignedOfficerId": null,
+  "decisionReason": null,
+  "decidedAt": null,
+  "settledAt": null,
+  "createdAt": "2026-10-27T04:21:37.785655Z",
+  "updatedAt": "2026-10-27T04:21:37.785655Z"
+}
+```
+
+**F2-02. manager2 assigns the claim to officer2**
+
+Claim Service, as manager2: `POST /api/v1/officer/claims/CLM-2026-000102/assign`
+
+Request body:
+
+```json
+{
+  "officerId": "officer2"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "claimId": "CLM-2026-000102",
+  "status": "SUBMITTED",
+  "assignedOfficerId": "officer2",
+  "updatedAt": "2026-10-27T04:21:37.810571100Z"
+}
+```
+
+**F2-03. officer2 starts the review**
+
+Assessment Service, as officer2: `POST /api/v1/officer/claims/CLM-2026-000102/review`
+
+Request body:
+
+```json
+{
+  "assessmentNotes": "The plumber report shows the pipe was already corroded; checking the policy exclusions."
+}
+```
+
+Response `200`:
+
+```json
+{
+  "claimId": "CLM-2026-000102",
+  "status": "UNDER_REVIEW",
+  "assignedOfficerId": "officer2",
+  "updatedAt": "2026-10-27T04:21:37.839924800Z"
+}
+```
+
+**F2-04. officer2 rejects the claim (a rejection carries no approvedAmount)**
+
+Assessment Service, as officer2: `POST /api/v1/officer/claims/CLM-2026-000102/decision`
+
+Request body:
+
+```json
+{
+  "decision": "REJECTED",
+  "decisionReason": "Gradual corrosion is excluded by section 4.2 of the property policy.",
+  "currency": "HKD"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "claimId": "CLM-2026-000102",
+  "status": "REJECTED",
+  "decisionReason": "Gradual corrosion is excluded by section 4.2 of the property policy.",
+  "approvedAmount": null,
+  "currency": "HKD",
+  "decidedByOfficerId": "officer2",
+  "decidedAt": "2026-10-27T04:21:37.869984200Z",
+  "updatedAt": "2026-10-27T04:21:37.870984200Z"
+}
+```
+
+**F2-05. a rejected claim can never be settled**
+
+Assessment Service, as officer2: `POST /api/v1/officer/claims/CLM-2026-000102/settlement`
+
+Request body:
+
+```json
+{
+  "settlementNote": "should be refused"
+}
+```
+
+Response `409`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:21:37.918181700Z",
+  "status": 409,
+  "error": "Conflict",
+  "code": "INVALID_CLAIM_TRANSITION",
+  "message": "A rejected claim cannot be settled",
+  "path": "/api/v1/officer/claims/CLM-2026-000102/settlement"
+}
+```
+
+**F2-06. final state of the claim: REJECTED, approvedAmount null**
+
+Claim Service, as claimant2: `GET /api/v1/claims/CLM-2026-000102`
+
+Response `200`:
+
+```json
+{
+  "id": 2,
+  "claimId": "CLM-2026-000102",
+  "claimantId": "claimant2",
+  "claimantName": "Wei Lim",
+  "claimantEmail": "wei.lim@example.com",
+  "policyNumber": "HK-PROP-0077",
+  "market": "HK",
+  "claimType": "PROPERTY",
+  "incidentDescription": "Water damage from a burst pipe in the kitchen",
+  "incidentDate": "2026-10-18",
+  "claimedAmount": 18000.00,
+  "approvedAmount": null,
+  "currency": "HKD",
+  "status": "REJECTED",
+  "assignedOfficerId": "officer2",
+  "decisionReason": "Gradual corrosion is excluded by section 4.2 of the property policy.",
+  "decidedAt": "2026-10-27T04:21:37.869984Z",
+  "settledAt": null,
+  "createdAt": "2026-10-27T04:21:37.785655Z",
+  "updatedAt": "2026-10-27T04:21:37.870984Z"
+}
+```
+
+**F2-07. status history**
+
+Claim Service, as claimant2: `GET /api/v1/claims/CLM-2026-000102/history`
+
+Response `200`:
+
+```json
+[
+  {
+    "claimId": "CLM-2026-000102",
+    "fromStatus": null,
+    "toStatus": "SUBMITTED",
+    "changedAt": "2026-10-27T04:21:37.786663Z",
+    "actor": "claimant2"
+  },
+  {
+    "claimId": "CLM-2026-000102",
+    "fromStatus": "SUBMITTED",
+    "toStatus": "UNDER_REVIEW",
+    "changedAt": "2026-10-27T04:21:37.838830Z",
+    "actor": "officer2"
+  },
+  {
+    "claimId": "CLM-2026-000102",
+    "fromStatus": "UNDER_REVIEW",
+    "toStatus": "REJECTED",
+    "changedAt": "2026-10-27T04:21:37.869984Z",
+    "actor": "officer2"
+  }
+]
+```
+
+**F2-08. assessment history**
+
+Assessment Service, as officer2: `GET /api/v1/officer/claims/CLM-2026-000102/assessments`
+
+Response `200`:
+
+```json
+[
+  {
+    "claimId": "CLM-2026-000102",
+    "officerId": "officer2",
+    "kind": "NOTE",
+    "notes": "The plumber report shows the pipe was already corroded; checking the policy exclusions.",
+    "createdAt": "2026-10-27T04:21:37.829666Z"
+  },
+  {
+    "claimId": "CLM-2026-000102",
+    "officerId": "officer2",
+    "kind": "REJECTED",
+    "notes": "Gradual corrosion is excluded by section 4.2 of the property policy.",
+    "createdAt": "2026-10-27T04:21:37.860141Z"
+  }
+]
+```
+
+**F2-09. management summary after both flows**
+
+Claim Service, as manager2: `GET /api/v1/management/summary`
+
+Response `200`:
+
+```json
+{
+  "generatedAt": "2026-10-27T04:21:37.965831500Z",
+  "liabilityNote": "Simple estimate: for claims not yet decided, the CLAIMED amount; for APPROVED claims awaiting settlement, the APPROVED amount; settled and rejected claims are left out. Grouped by currency, with no exchange-rate conversion. It is neither the expected settlement nor a booked reserve. Not an actuarial reserve.",
+  "outstandingClaimCount": 0,
+  "outstandingLiabilityByCurrency": [],
+  "countsByStatus": {
+    "SUBMITTED": 0,
+    "UNDER_REVIEW": 0,
+    "MORE_INFO_REQUIRED": 0,
+    "APPROVED": 0,
+    "REJECTED": 1,
+    "SETTLED": 1
+  }
+}
+```
+
+**F2-10. officer metrics after both flows**
+
+Claim Service, as manager2: `GET /api/v1/management/officers`
+
+Response `200`:
+
+```json
+{
+  "generatedAt": "2026-10-27T04:21:37.978987100Z",
+  "note": "Open workload is by CURRENT assignee (no reassignment history); decisions are by the deciding officer. Amounts are grouped by currency and never added across currencies.",
+  "officers": [
+    {
+      "officerId": "officer1",
+      "openClaimCount": 0,
+      "openClaimsByStatus": {
+        "SUBMITTED": 0,
+        "UNDER_REVIEW": 0,
+        "MORE_INFO_REQUIRED": 0,
+        "APPROVED": 0
+      },
+      "openClaimedAmountByCurrency": [],
+      "decidedCount": 1,
+      "approvedCount": 1,
+      "settledCount": 1,
+      "rejectedCount": 0,
+      "approvedAmountByCurrency": [
+        {
+          "currency": "INR",
+          "claimCount": 1,
+          "amount": 2200.00
+        }
+      ]
+    },
+    {
+      "officerId": "officer2",
+      "openClaimCount": 0,
+      "openClaimsByStatus": {
+        "SUBMITTED": 0,
+        "UNDER_REVIEW": 0,
+        "MORE_INFO_REQUIRED": 0,
+        "APPROVED": 0
+      },
+      "openClaimedAmountByCurrency": [],
+      "decidedCount": 1,
+      "approvedCount": 0,
+      "settledCount": 0,
+      "rejectedCount": 1,
+      "approvedAmountByCurrency": []
+    }
+  ]
+}
+```
+
+### 15.3 What the two flows cover
+
+The two flows (with section 14 and section 18 steps 14 and 15) execute **all 26 endpoints**: register, login, me, create user, list users, get user, change role, activate or deactivate (User Service); create claim, list, get, patch, history, assignment history, update history, officer claims, assign, management summary, officer metrics (Claim Service); review, assessment history, decision approve, decision reject, settlement, information request, information request list, information answer (Assessment Service). Section 20 maps each endpoint to its steps.
+
+## 16. Role testing matrix
+
+Every one of the 26 public endpoints was called as **no token, CLAIMANT (`claimant1`), CLAIMS_OFFICER (`officer1`), MANAGER (`manager1`) and ADMIN (`admin1`)**, each time on freshly prepared state that is valid for the call (for example a new `UNDER_REVIEW` claim assigned to `officer1` for the decision). That is **130 calls; each result matched the expectation written beforehand from the access rule tables**. The number in a cell is the HTTP status of a valid request by that identity.
+
+| # | Endpoint | Service | No token | CLAIMANT | CLAIMS_OFFICER | MANAGER | ADMIN | Scope |
+|---|---|---|---|---|---|---|---|---|
+| 1 | `POST /api/v1/auth/register` | User | 201 | 201 | 201 | 201 | 201 | open: a token is ignored |
+| 2 | `POST /api/v1/auth/login` | User | 200 | 200 | 200 | 200 | 200 | open: a token is ignored |
+| 3 | `GET /api/v1/users/me` | User | 401 | 200 | 200 | 200 | 200 | the caller's own account |
+| 4 | `POST /api/v1/users` | User | 401 | 403 | 403 | 403 | 201 | ADMIN only |
+| 5 | `GET /api/v1/users` | User | 401 | 403 | 403 | 403 | 200 | ADMIN only |
+| 6 | `GET /api/v1/users/{username}` | User | 401 | 403 | 403 | 403 | 200 | ADMIN only |
+| 7 | `PUT /api/v1/users/{username}/role` | User | 401 | 403 | 403 | 403 | 200 | ADMIN only |
+| 8 | `PUT /api/v1/users/{username}/active` | User | 401 | 403 | 403 | 403 | 200 | ADMIN only |
+| 9 | `POST /api/v1/claims` | Claim | 401 | 201 | 403 | 403 | 201 | claimant (the claim is owned by the caller) |
+| 10 | `GET /api/v1/claims` | Claim | 401 | 200 | 200 | 200 | 200 | claimant: own claims; officer: unassigned and own; manager, admin: all |
+| 11 | `GET /api/v1/claims/{claimId}` | Claim | 401 | 200 | 200 | 200 | 200 | claimant: own; officer: unassigned or own; manager, admin: any |
+| 12 | `PATCH /api/v1/claims/{claimId}` | Claim | 401 | 200 | 403 | 403 | 200 | claimant: own claim, while SUBMITTED |
+| 13 | `GET /api/v1/claims/{claimId}/history` | Claim | 401 | 200 | 200 | 200 | 200 | same scope as the claim |
+| 14 | `GET /api/v1/claims/{claimId}/assignments` | Claim | 401 | 200 | 200 | 200 | 200 | same scope as the claim |
+| 15 | `GET /api/v1/claims/{claimId}/updates` | Claim | 401 | 200 | 200 | 200 | 200 | same scope as the claim |
+| 16 | `GET /api/v1/officer/claims` | Claim | 401 | 403 | 200 | 200 | 200 | officer: unassigned and own; manager, admin: all |
+| 17 | `POST /api/v1/officer/claims/{claimId}/assign` | Claim | 401 | 403 | 200 | 200 | 200 | officer: only to themselves; manager, admin: any active claims officer |
+| 18 | `GET /api/v1/management/summary` | Claim | 401 | 403 | 403 | 200 | 200 | MANAGER, ADMIN |
+| 19 | `GET /api/v1/management/officers` | Claim | 401 | 403 | 403 | 200 | 200 | MANAGER, ADMIN |
+| 20 | `POST /api/v1/officer/claims/{claimId}/review` | Assessment | 401 | 403 | 200 | 403 | 200 | officer acts as themselves; admin must name the officer |
+| 21 | `GET /api/v1/officer/claims/{claimId}/assessments` | Assessment | 401 | 403 | 200 | 403 | 200 | officer (in scope); admin. Never a claimant or a manager |
+| 22 | `POST /api/v1/officer/claims/{claimId}/decision` | Assessment | 401 | 403 | 200 | 403 | 200 | the assigned officer; admin must name the officer |
+| 23 | `POST /api/v1/officer/claims/{claimId}/settlement` | Assessment | 401 | 403 | 200 | 403 | 200 | the assigned officer; admin must name the officer |
+| 24 | `POST /api/v1/officer/claims/{claimId}/information-requests` | Assessment | 401 | 403 | 201 | 403 | 201 | the assigned officer; admin must name the officer |
+| 25 | `GET /api/v1/claims/{claimId}/information-requests` | Assessment | 401 | 200 | 200 | 200 | 200 | claimant: own claim; officer: unassigned or own; manager, admin: any |
+| 26 | `POST /api/v1/claims/{claimId}/information` | Assessment | 401 | 200 | 403 | 403 | 200 | claimant: own claim; admin |
+
+Reading the matrix:
+
+* **No token** is `401 UNAUTHENTICATED` everywhere except the three open routes (register, login; `GET /actuator/health` is open as well).
+* **403 `FORBIDDEN`** is the security chain refusing the role before any service code runs. Nothing is changed or stored.
+* **200 / 201 means "allowed and in scope".** For a claimant the claim must be their own; for a claims officer it must be unassigned or assigned to them; a claim outside that scope answers **404 `CLAIM_NOT_FOUND`**, exactly like an unknown claim (section 17). A manager and an administrator see every claim.
+* **ADMIN is allowed on every public route**, but acts for an officer only by naming one: on review, decision, settlement and information request an administrator who names no officer gets **400 `VALIDATION_FAILED`** (API-20.4, API-22.19, API-24.10), and an administrator naming an officer other than the one the claim is assigned to gets **409 `OFFICER_MISMATCH`** (API-20.10, API-22.17). In the matrix the administrator's body names `officer1`.
+* **A claims officer** never has to send an officer ID; naming another officer is **403 `OFFICER_IDENTITY_MISMATCH`** (API-20.3, API-22.18, API-23.9, API-24.9). On `assign` an officer may only name themselves (**403 `ASSIGNMENT_NOT_PERMITTED`**, API-17.3).
+* **The assessment history** (`GET .../assessments`) is never readable by a claimant or a manager (403).
+
+### 16.1 The response codes, with real bodies
+
+Every error has the body `{timestamp, status, error, code, message, path}` and never a stack trace.
+
+| Status | Meaning here | Typical `code` values |
+|---|---|---|
+| **200** / **201** | success (201 for create claim, register, create user, information request) | n/a |
+| **400** | invalid input, or a business rule on the input | `VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_PARAMETER`, `NO_FIELDS_TO_UPDATE`, `CONFLICTING_FILTERS`, `INVALID_OFFICER`, `INVALID_ROLE`, `PASSWORD_TOO_LONG`, `CURRENCY_MISMATCH`, `INVALID_APPROVED_AMOUNT` |
+| **401** | no valid token, or a failed login | `UNAUTHENTICATED`, `INVALID_CREDENTIALS` |
+| **403** | known caller, not allowed | `FORBIDDEN`, `OFFICER_IDENTITY_MISMATCH`, `ASSIGNMENT_NOT_PERMITTED` |
+| **404** | unknown claim, request or user, **or a claim outside the caller's scope** | `CLAIM_NOT_FOUND`, `INFORMATION_REQUEST_NOT_FOUND`, `USER_NOT_FOUND` |
+| **405**, **415** | wrong method, wrong content type | `METHOD_NOT_ALLOWED`, `UNSUPPORTED_MEDIA_TYPE` |
+| **409** | invalid lifecycle move or duplicate | `INVALID_CLAIM_TRANSITION`, `OFFICER_MISMATCH`, `CLAIM_NOT_EDITABLE`, `USERNAME_TAKEN`, `CANNOT_CHANGE_OWN_ROLE`, `CANNOT_DEACTIVATE_SELF` |
+| **503** | a service this one needs is unreachable or too slow | `DOWNSTREAM_UNAVAILABLE` |
+| **502** | a service this one needs answered with something it could not use | `DOWNSTREAM_ERROR` |
+
+**E-401. 401 UNAUTHENTICATED: no token**
+
+Claim Service, without a token: `GET /api/v1/claims`
+
+Response `401`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:32:23.770971800Z",
+  "status": 401,
+  "error": "Unauthorized",
+  "code": "UNAUTHENTICATED",
+  "message": "A valid Bearer token is required. Log in with POST /api/v1/auth/login on the User Service.",
+  "path": "/api/v1/claims"
+}
+```
+
+**E-403. 403 FORBIDDEN: the role may not use the route**
+
+Claim Service, as claimant1: `GET /api/v1/management/summary`
+
+Response `403`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:32:23.821148500Z",
+  "status": 403,
+  "error": "Forbidden",
+  "code": "FORBIDDEN",
+  "message": "Your role is not allowed to use this route",
+  "path": "/api/v1/management/summary"
+}
+```
+
+**E-404. 404 CLAIM_NOT_FOUND: an unknown claim (a claim outside the caller's scope gives exactly the same body)**
+
+Claim Service, as claimant1: `GET /api/v1/claims/CLM-2026-999999`
+
+Response `404`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:32:23.832039100Z",
+  "status": 404,
+  "error": "Not Found",
+  "code": "CLAIM_NOT_FOUND",
+  "message": "Claim CLM-2026-999999 was not found",
+  "path": "/api/v1/claims/CLM-2026-999999"
+}
+```
+
+**E-404b. 404 CLAIM_NOT_FOUND for a claim that exists but belongs to someone else**
+
+Claim Service, as claimant2: `GET /api/v1/claims/CLM-2026-000105`
+
+Response `404`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:32:23.848850800Z",
+  "status": 404,
+  "error": "Not Found",
+  "code": "CLAIM_NOT_FOUND",
+  "message": "Claim CLM-2026-000105 was not found",
+  "path": "/api/v1/claims/CLM-2026-000105"
+}
+```
+
+**E-400. 400 VALIDATION_FAILED: every broken field is listed in the message**
+
+Claim Service, as claimant1: `POST /api/v1/claims`
+
+Request body:
+
+```json
+{
+  "claimantName": "Asha Rao",
+  "claimantEmail": "not-an-email",
+  "policyNumber": "POL-1",
+  "market": "sg",
+  "claimType": "MOTOR",
+  "incidentDescription": "x",
+  "incidentDate": "2026-10-20",
+  "claimedAmount": 0,
+  "currency": "INR"
+}
+```
+
+Response `400`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:32:23.911397Z",
+  "status": 400,
+  "error": "Bad Request",
+  "code": "VALIDATION_FAILED",
+  "message": "claimantEmail must be a well-formed email address; claimedAmount must be greater than 0; market must be a 2-letter upper-case market code, e.g. SG",
+  "path": "/api/v1/claims"
+}
+```
+
+**E-400b. 400 INVALID_APPROVED_AMOUNT: approving more than was claimed**
+
+Assessment Service, as officer1: `POST /api/v1/officer/claims/CLM-2026-000105/decision`
+
+Request body:
+
+```json
+{
+  "decision": "APPROVED",
+  "decisionReason": "x",
+  "approvedAmount": 5000.00,
+  "currency": "INR"
+}
+```
+
+Response `400`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:32:23.944736800Z",
+  "status": 400,
+  "error": "Bad Request",
+  "code": "INVALID_APPROVED_AMOUNT",
+  "message": "approvedAmount cannot exceed the claimed amount",
+  "path": "/api/v1/officer/claims/CLM-2026-000105/decision"
+}
+```
+
+**E-403b. 403 OFFICER_IDENTITY_MISMATCH: an officer names someone else**
+
+Assessment Service, as officer1: `POST /api/v1/officer/claims/CLM-2026-000105/decision`
+
+Request body:
+
+```json
+{
+  "decision": "REJECTED",
+  "decisionReason": "x",
+  "currency": "INR",
+  "decidedByOfficerId": "officer2"
+}
+```
+
+Response `403`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:32:23.954720Z",
+  "status": 403,
+  "error": "Forbidden",
+  "code": "OFFICER_IDENTITY_MISMATCH",
+  "message": "A claims officer can only act as themselves; the officer ID in the request does not match the token",
+  "path": "/api/v1/officer/claims/CLM-2026-000105/decision"
+}
+```
+
+**E-409. 409 INVALID_CLAIM_TRANSITION: a second review of a claim already under review**
+
+Assessment Service, as officer1: `POST /api/v1/officer/claims/CLM-2026-000105/review`
+
+Request body:
+
+```json
+{}
+```
+
+Response `409`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:32:23.989473Z",
+  "status": 409,
+  "error": "Conflict",
+  "code": "INVALID_CLAIM_TRANSITION",
+  "message": "Review can only be started for a SUBMITTED or MORE_INFO_REQUIRED claim, but claim is UNDER_REVIEW",
+  "path": "/api/v1/officer/claims/CLM-2026-000105/review"
+}
+```
+
+The 409 example (`INVALID_CLAIM_TRANSITION`) for a rejected claim is F2-05 above, the 400 `INVALID_OFFICER` example is S14-4 in section 18, and the 503 examples are in section 17.2.
+
+## 17. Positive and negative scenarios for every endpoint
+
+### 17.1 Scenario catalogue
+
+**210 scenarios were executed live, 45 positive and 165 negative; every status and every `code` in the tables matched the expectation.** The IDs are `API-<endpoint>.<n>`, where `<endpoint>` is the number of the row in the matrix of section 16 (User Service 1 to 8, Claim Service 9 to 19, Assessment Service 20 to 26). Each endpoint has at least one positive and at least two negative scenarios. "Expected status" is what the run returned; where a `code` is shown it was checked too.
+
+Observations from running them:
+
+* A claim **outside the caller's scope answers exactly like an unknown claim**: the same 404, the same `CLAIM_NOT_FOUND` and the same message shape, for another claimant (API-11.3) and for an officer who is not the assigned one (API-11.4). That is deliberate, so claim numbers cannot be probed.
+* **Unknown JSON properties are ignored**: a `role` in the register body (API-1.2) and a `claimId` or `claimantId` in the create-claim body (API-9.2) have no effect; the server generates the first and the token supplies the second.
+* **A second answer is refused as `INVALID_CLAIM_TRANSITION`** (API-26.2), not as `INFORMATION_REQUEST_ALREADY_ANSWERED`: only one request can be open at a time and answering the last one resumes the claim, so the claim is no longer `MORE_INFO_REQUIRED` by the time a second answer arrives. The code `INFORMATION_REQUEST_ALREADY_ANSWERED` exists in `InformationRequest.answer` but was not reachable through the API in these runs.
+* `INVALID_MARKET` is not in the catalogue because it needs `claims.markets.allowed` to be set; with the default (empty) any 2-letter upper-case market is accepted. It is covered by `MarketValidationTest`.
+* A wrong method gives `405` only for a caller allowed to reach the route: with an administrator token (API-1.11); with no token the same request is `401`.
+* `415` was exercised on register and create claim only; the other body-taking routes share the same handler.
+
+#### 1. `POST /api/v1/auth/register`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-1.1 | Register a new claimant | no token | 201 |  |
+| API-1.2 | A `role` field in the body is ignored: the account is a CLAIMANT | no token | 201 |  |
+| API-1.3 | Username already taken | no token | 409 | `USERNAME_TAKEN` |
+| API-1.4 | Username too short (2 characters) | no token | 400 | `VALIDATION_FAILED` |
+| API-1.5 | Username with an upper-case letter | no token | 400 | `VALIDATION_FAILED` |
+| API-1.6 | Password of 7 characters | no token | 400 | `VALIDATION_FAILED` |
+| API-1.7 | Password of 40 two-byte characters (80 bytes, over the 72-byte limit) | no token | 400 | `PASSWORD_TOO_LONG` |
+| API-1.8 | Malformed JSON | no token | 400 | `MALFORMED_REQUEST` |
+| API-1.9 | No body | no token | 400 | `MALFORMED_REQUEST` |
+| API-1.10 | Content type `text/plain` | no token | 415 | `UNSUPPORTED_MEDIA_TYPE` |
+| API-1.11 | Wrong method (`GET`) with an administrator token | admin1 | 405 | `METHOD_NOT_ALLOWED` |
+
+#### 2. `POST /api/v1/auth/login`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-2.1 | Valid credentials | no token | 200 |  |
+| API-2.2 | Username in another case (matched case-insensitively) | no token | 200 |  |
+| API-2.3 | A garbage `Authorization` header is ignored by login | no token | 200 |  |
+| API-2.4 | Wrong password | no token | 401 | `INVALID_CREDENTIALS` |
+| API-2.5 | Unknown user (same 401 and message as a wrong password) | no token | 401 | `INVALID_CREDENTIALS` |
+| API-2.6 | Deactivated user (same 401 and message again) | no token | 401 | `INVALID_CREDENTIALS` |
+| API-2.7 | Blank username | no token | 400 | `VALIDATION_FAILED` |
+| API-2.8 | Password missing | no token | 400 | `VALIDATION_FAILED` |
+| API-2.9 | Malformed JSON | no token | 400 | `MALFORMED_REQUEST` |
+
+#### 3. `GET /api/v1/users/me`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-3.1 | Own account, as a claimant | claimant1 | 200 |  |
+| API-3.2 | Own account, as an administrator | admin1 | 200 |  |
+| API-3.3 | No token | no token | 401 | `UNAUTHENTICATED` |
+| API-3.4 | Token that is not a JWT | garbage | 401 | `UNAUTHENTICATED` |
+
+#### 4. `POST /api/v1/users`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-4.1 | Create an officer | admin1 | 201 |  |
+| API-4.2 | Username already taken | admin1 | 409 | `USERNAME_TAKEN` |
+| API-4.3 | Role `SERVICE` cannot be given to a person | admin1 | 400 | `INVALID_ROLE` |
+| API-4.4 | Unknown role `SUPERUSER` | admin1 | 400 | `MALFORMED_REQUEST` |
+| API-4.5 | Role missing | admin1 | 400 | `VALIDATION_FAILED` |
+| API-4.6 | A manager may not create users | manager1 | 403 | `FORBIDDEN` |
+| API-4.7 | No token | no token | 401 | `UNAUTHENTICATED` |
+
+#### 5. `GET /api/v1/users`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-5.1 | First page of 3 | admin1 | 200 |  |
+| API-5.2 | `size=101` (maximum is 100) | admin1 | 400 | `VALIDATION_FAILED` |
+| API-5.3 | `size=0` | admin1 | 400 | `VALIDATION_FAILED` |
+| API-5.4 | `page=-1` | admin1 | 400 | `VALIDATION_FAILED` |
+| API-5.5 | `page=abc` | admin1 | 400 | `INVALID_PARAMETER` |
+| API-5.6 | A claims officer may not list users | officer1 | 403 | `FORBIDDEN` |
+
+#### 6. `GET /api/v1/users/{username}`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-6.1 | An existing user | admin1 | 200 |  |
+| API-6.2 | Unknown user | admin1 | 404 | `USER_NOT_FOUND` |
+| API-6.3 | A claimant may not read another user | claimant1 | 403 | `FORBIDDEN` |
+
+#### 7. `PUT /api/v1/users/{username}/role`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-7.1 | Change another user's role | admin1 | 200 |  |
+| API-7.2 | An administrator cannot change their own role | admin1 | 409 | `CANNOT_CHANGE_OWN_ROLE` |
+| API-7.3 | Role `SERVICE` | admin1 | 400 | `INVALID_ROLE` |
+| API-7.4 | Unknown role value | admin1 | 400 | `MALFORMED_REQUEST` |
+| API-7.5 | Role missing | admin1 | 400 | `VALIDATION_FAILED` |
+| API-7.6 | Unknown user | admin1 | 404 | `USER_NOT_FOUND` |
+| API-7.7 | A claimant cannot promote themselves | claimant1 | 403 | `FORBIDDEN` |
+
+#### 8. `PUT /api/v1/users/{username}/active`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-8.1 | Reactivate or confirm an active user | admin1 | 200 |  |
+| API-8.2 | Deactivate a user | admin1 | 200 |  |
+| API-8.3 | An administrator cannot deactivate themselves | admin1 | 409 | `CANNOT_DEACTIVATE_SELF` |
+| API-8.4 | `active` missing | admin1 | 400 | `VALIDATION_FAILED` |
+| API-8.5 | `active` is not a boolean | admin1 | 400 | `MALFORMED_REQUEST` |
+| API-8.6 | Unknown user | admin1 | 404 | `USER_NOT_FOUND` |
+| API-8.7 | A manager may not switch accounts | manager1 | 403 | `FORBIDDEN` |
+
+#### 9. `POST /api/v1/claims`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-9.1 | Submit a claim | claimant1 | 201 |  |
+| API-9.2 | `claimId` and `claimantId` in the body are ignored: the server generates the first, the token gives the second | claimant1 | 201 |  |
+| API-9.3 | policyNumber missing | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-9.4 | policyNumber `!!` | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-9.5 | market in lower case | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-9.6 | currency in lower case | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-9.7 | claimedAmount 0 | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-9.8 | claimedAmount negative | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-9.9 | claimedAmount with 3 decimals | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-9.10 | incidentDate in the future | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-9.11 | claimantEmail not an e-mail address | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-9.12 | claimType `BOAT` | claimant1 | 400 | `MALFORMED_REQUEST` |
+| API-9.13 | incidentDescription of 2001 characters | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-9.14 | Malformed JSON | claimant1 | 400 | `MALFORMED_REQUEST` |
+| API-9.15 | Content type `text/plain` | claimant1 | 415 | `UNSUPPORTED_MEDIA_TYPE` |
+| API-9.16 | A claims officer may not submit a claim | officer1 | 403 | `FORBIDDEN` |
+| API-9.17 | No token | no token | 401 | `UNAUTHENTICATED` |
+
+#### 10. `GET /api/v1/claims`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-10.1 | A claimant lists their own claims | claimant1 | 200 |  |
+| API-10.2 | Filter `status=SUBMITTED&claimType=MOTOR&market=SG` | manager1 | 200 |  |
+| API-10.3 | `assigned=false` together with `assignedOfficerId` | manager1 | 400 | `CONFLICTING_FILTERS` |
+| API-10.4 | `status=BOGUS` | manager1 | 400 | `INVALID_PARAMETER` |
+| API-10.5 | `size=101` | manager1 | 400 | `VALIDATION_FAILED` |
+| API-10.6 | `page=-1` | manager1 | 400 | `VALIDATION_FAILED` |
+| API-10.7 | No token | no token | 401 | `UNAUTHENTICATED` |
+
+#### 11. `GET /api/v1/claims/{claimId}`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-11.1 | The owner reads the claim | claimant1 | 200 |  |
+| API-11.2 | Unknown claim `CLM-2026-999999` | claimant1 | 404 | `CLAIM_NOT_FOUND` |
+| API-11.3 | Another claimant (same 404 as an unknown claim) | claimant2 | 404 | `CLAIM_NOT_FOUND` |
+| API-11.4 | A claim assigned to officer1, read by officer2 (outside their scope) | officer2 | 404 | `CLAIM_NOT_FOUND` |
+| API-11.5 | The same claim read by its assigned officer | officer1 | 200 |  |
+| API-11.6 | No token | no token | 401 | `UNAUTHENTICATED` |
+
+#### 12. `PATCH /api/v1/claims/{claimId}`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-12.1 | Correct the claimed amount while SUBMITTED | claimant1 | 200 |  |
+| API-12.2 | Empty body `{}` | claimant1 | 400 | `NO_FIELDS_TO_UPDATE` |
+| API-12.3 | Only `market` (not changeable, so no field to update) | claimant1 | 400 | `NO_FIELDS_TO_UPDATE` |
+| API-12.4 | claimedAmount 0 | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-12.5 | Blank claimantName | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-12.6 | A multi-line description is accepted | claimant1 | 200 |  |
+| API-12.7 | Another claimant | claimant2 | 404 | `CLAIM_NOT_FOUND` |
+| API-12.8 | Unknown claim | claimant1 | 404 | `CLAIM_NOT_FOUND` |
+| API-12.9 | The claim is no longer SUBMITTED (an officer has started) | claimant1 | 409 | `CLAIM_NOT_EDITABLE` |
+| API-12.10 | A claims officer may not edit a claim | officer1 | 403 | `FORBIDDEN` |
+
+#### 13. `GET /api/v1/claims/{claimId}/history`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-13.1 | The owner reads it | claimant1 | 200 |  |
+| API-13.2 | Unknown claim | claimant1 | 404 | `CLAIM_NOT_FOUND` |
+| API-13.3 | Another claimant | claimant2 | 404 | `CLAIM_NOT_FOUND` |
+| API-13.4 | An officer outside the claim's scope | officer2 | 404 | `CLAIM_NOT_FOUND` |
+| API-13.5 | No token | no token | 401 | `UNAUTHENTICATED` |
+
+#### 14. `GET /api/v1/claims/{claimId}/assignments`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-14.1 | The owner reads it | claimant1 | 200 |  |
+| API-14.2 | Unknown claim | claimant1 | 404 | `CLAIM_NOT_FOUND` |
+| API-14.3 | Another claimant | claimant2 | 404 | `CLAIM_NOT_FOUND` |
+| API-14.4 | An officer outside the claim's scope | officer2 | 404 | `CLAIM_NOT_FOUND` |
+| API-14.5 | No token | no token | 401 | `UNAUTHENTICATED` |
+
+#### 15. `GET /api/v1/claims/{claimId}/updates`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-15.1 | The owner reads it | claimant1 | 200 |  |
+| API-15.2 | Unknown claim | claimant1 | 404 | `CLAIM_NOT_FOUND` |
+| API-15.3 | Another claimant | claimant2 | 404 | `CLAIM_NOT_FOUND` |
+| API-15.4 | An officer outside the claim's scope | officer2 | 404 | `CLAIM_NOT_FOUND` |
+| API-15.5 | No token | no token | 401 | `UNAUTHENTICATED` |
+
+#### 16. `GET /api/v1/officer/claims`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-16.1 | The unassigned queue | officer1 | 200 |  |
+| API-16.2 | All claims of one officer | manager1 | 200 |  |
+| API-16.3 | `assigned=false` together with `assignedOfficerId` | manager1 | 400 | `CONFLICTING_FILTERS` |
+| API-16.4 | `claimType=BOAT` | manager1 | 400 | `INVALID_PARAMETER` |
+| API-16.5 | `size=101` | officer1 | 400 | `VALIDATION_FAILED` |
+| API-16.6 | A claimant may not use the staff list | claimant1 | 403 | `FORBIDDEN` |
+
+#### 17. `POST /api/v1/officer/claims/{claimId}/assign`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-17.1 | A manager assigns to an active claims officer | manager1 | 200 |  |
+| API-17.2 | An officer takes an unassigned claim for themselves | officer1 | 200 |  |
+| API-17.3 | An officer names another officer | officer1 | 403 | `ASSIGNMENT_NOT_PERMITTED` |
+| API-17.4 | A manager names a claimant | manager1 | 400 | `INVALID_OFFICER` |
+| API-17.5 | A manager names a user that does not exist | manager1 | 400 | `INVALID_OFFICER` |
+| API-17.6 | A manager names a deactivated officer | manager1 | 400 | `INVALID_OFFICER` |
+| API-17.7 | `officerId` missing | manager1 | 400 | `VALIDATION_FAILED` |
+| API-17.8 | `officerId` is the Swagger placeholder `string` | manager1 | 400 | `VALIDATION_FAILED` |
+| API-17.9 | Unknown claim | manager1 | 404 | `CLAIM_NOT_FOUND` |
+| API-17.10 | A claim assigned to officer1, taken by officer2 | officer2 | 404 | `CLAIM_NOT_FOUND` |
+| API-17.11 | A settled claim cannot be assigned | manager1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-17.12 | A manager reassigns an open claim to a different officer | manager1 | 200 |  |
+| API-17.13 | A claimant may not assign | claimant1 | 403 | `FORBIDDEN` |
+
+#### 18. `GET /api/v1/management/summary`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-18.1 | The summary | manager1 | 200 |  |
+| API-18.2 | An officer may not read it | officer1 | 403 | `FORBIDDEN` |
+| API-18.3 | No token | no token | 401 | `UNAUTHENTICATED` |
+
+#### 19. `GET /api/v1/management/officers`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-19.1 | Per-officer metrics | manager1 | 200 |  |
+| API-19.2 | A claimant may not read them | claimant1 | 403 | `FORBIDDEN` |
+| API-19.3 | No token | no token | 401 | `UNAUTHENTICATED` |
+
+#### 20. `POST /api/v1/officer/claims/{claimId}/review`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-20.1 | An officer starts the review (unassigned claim, so it is assigned to them) | officer1 | 200 |  |
+| API-20.2 | Review again while UNDER_REVIEW | officer1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-20.3 | An officer names another officer | officer1 | 403 | `OFFICER_IDENTITY_MISMATCH` |
+| API-20.4 | An administrator names no officer | admin1 | 400 | `VALIDATION_FAILED` |
+| API-20.5 | An administrator names a claimant as the officer | admin1 | 400 | `INVALID_OFFICER` |
+| API-20.6 | assessmentNotes of 2001 characters | officer1 | 400 | `VALIDATION_FAILED` |
+| API-20.7 | `officerId` is the placeholder `string` | officer1 | 400 | `VALIDATION_FAILED` |
+| API-20.8 | Unknown claim | officer1 | 404 | `CLAIM_NOT_FOUND` |
+| API-20.9 | A claim assigned to officer1, reviewed by officer2 | officer2 | 404 | `CLAIM_NOT_FOUND` |
+| API-20.10 | An administrator acts as officer2 on a claim held by officer1 | admin1 | 409 | `OFFICER_MISMATCH` |
+| API-20.11 | Review while a request is still OPEN (MORE_INFO_REQUIRED) | officer1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-20.12 | A manager may not review | manager1 | 403 | `FORBIDDEN` |
+
+#### 21. `GET /api/v1/officer/claims/{claimId}/assessments`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-21.1 | The assessment history | officer1 | 200 |  |
+| API-21.2 | Unknown claim | officer1 | 404 | `CLAIM_NOT_FOUND` |
+| API-21.3 | A claim assigned to officer1, read by officer2 | officer2 | 404 | `CLAIM_NOT_FOUND` |
+| API-21.4 | A manager may not read it | manager1 | 403 | `FORBIDDEN` |
+| API-21.5 | A claimant may not read it | claimant1 | 403 | `FORBIDDEN` |
+
+#### 22. `POST /api/v1/officer/claims/{claimId}/decision`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-22.1 | Approve for less than the claimed amount | officer1 | 200 |  |
+| API-22.2 | Approve for exactly the claimed amount | officer1 | 200 |  |
+| API-22.3 | Reject (no approvedAmount) | officer1 | 200 |  |
+| API-22.4 | A second decision (the first is kept) | officer1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-22.5 | Approve without an amount | officer1 | 400 | `INVALID_APPROVED_AMOUNT` |
+| API-22.6 | Approve with amount 0 | officer1 | 400 | `INVALID_APPROVED_AMOUNT` |
+| API-22.7 | Approve for more than the claimed amount | officer1 | 400 | `INVALID_APPROVED_AMOUNT` |
+| API-22.8 | Reject with an amount | officer1 | 400 | `INVALID_APPROVED_AMOUNT` |
+| API-22.9 | Decision currency differs from the claim currency | officer1 | 400 | `CURRENCY_MISMATCH` |
+| API-22.10 | decisionReason missing | officer1 | 400 | `VALIDATION_FAILED` |
+| API-22.11 | decision `MAYBE` | officer1 | 400 | `MALFORMED_REQUEST` |
+| API-22.12 | currency in lower case | officer1 | 400 | `VALIDATION_FAILED` |
+| API-22.13 | approvedAmount with 3 decimals | officer1 | 400 | `VALIDATION_FAILED` |
+| API-22.14 | Decide a claim that is still SUBMITTED | officer1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-22.15 | Unknown claim | officer1 | 404 | `CLAIM_NOT_FOUND` |
+| API-22.16 | officer2 decides a claim held by officer1 | officer2 | 404 | `CLAIM_NOT_FOUND` |
+| API-22.17 | An administrator acts as officer2 on a claim held by officer1 | admin1 | 409 | `OFFICER_MISMATCH` |
+| API-22.18 | An officer names another officer in the body | officer1 | 403 | `OFFICER_IDENTITY_MISMATCH` |
+| API-22.19 | An administrator names no officer | admin1 | 400 | `VALIDATION_FAILED` |
+| API-22.20 | A manager may not decide | manager1 | 403 | `FORBIDDEN` |
+
+#### 23. `POST /api/v1/officer/claims/{claimId}/settlement`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-23.1 | Settle an approved claim | officer1 | 200 |  |
+| API-23.2 | Settle without a note (the history records `Claim settled`) | officer1 | 200 |  |
+| API-23.3 | Settle twice | officer1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-23.4 | Settle a rejected claim | officer1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-23.5 | Settle a claim that is only UNDER_REVIEW | officer1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-23.6 | settlementNote of 2001 characters | officer1 | 400 | `VALIDATION_FAILED` |
+| API-23.7 | Unknown claim | officer1 | 404 | `CLAIM_NOT_FOUND` |
+| API-23.8 | officer2 settles a claim held by officer1 | officer2 | 404 | `CLAIM_NOT_FOUND` |
+| API-23.9 | An officer names another officer | officer1 | 403 | `OFFICER_IDENTITY_MISMATCH` |
+| API-23.10 | A manager may not settle | manager1 | 403 | `FORBIDDEN` |
+
+#### 24. `POST /api/v1/officer/claims/{claimId}/information-requests`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-24.1 | An officer asks for information | officer1 | 201 |  |
+| API-24.2 | A second request while the claim is MORE_INFO_REQUIRED | officer1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-24.3 | question blank | officer1 | 400 | `VALIDATION_FAILED` |
+| API-24.4 | question missing | officer1 | 400 | `VALIDATION_FAILED` |
+| API-24.5 | question of 2001 characters | officer1 | 400 | `VALIDATION_FAILED` |
+| API-24.6 | The claim is still SUBMITTED | officer1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-24.7 | Unknown claim | officer1 | 404 | `CLAIM_NOT_FOUND` |
+| API-24.8 | officer2 asks on a claim held by officer1 | officer2 | 404 | `CLAIM_NOT_FOUND` |
+| API-24.9 | An officer names another officer | officer1 | 403 | `OFFICER_IDENTITY_MISMATCH` |
+| API-24.10 | An administrator names no officer | admin1 | 400 | `VALIDATION_FAILED` |
+| API-24.11 | A claimant may not ask | claimant1 | 403 | `FORBIDDEN` |
+
+#### 25. `GET /api/v1/claims/{claimId}/information-requests`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-25.1 | A claim with an OPEN request, read by the claimant | claimant1 | 200 |  |
+| API-25.2 | A claim with no requests (empty list) | claimant1 | 200 |  |
+| API-25.3 | The assigned officer reads it | officer1 | 200 |  |
+| API-25.4 | A manager reads it | manager1 | 200 |  |
+| API-25.5 | Unknown claim | claimant1 | 404 | `CLAIM_NOT_FOUND` |
+| API-25.6 | Another claimant | claimant2 | 404 | `CLAIM_NOT_FOUND` |
+| API-25.7 | officer2 reads a claim held by officer1 | officer2 | 404 | `CLAIM_NOT_FOUND` |
+
+#### 26. `POST /api/v1/claims/{claimId}/information`
+
+| ID | Scenario | Caller | Expected status | Expected `code` |
+|---|---|---|---|---|
+| API-26.1 | The claimant answers (last open request, so the claim resumes) | claimant1 | 200 |  |
+| API-26.2 | Answer again after the claim has resumed (the claim is no longer MORE_INFO_REQUIRED) | claimant1 | 409 | `INVALID_CLAIM_TRANSITION` |
+| API-26.3 | Unknown request ID | claimant1 | 404 | `INFORMATION_REQUEST_NOT_FOUND` |
+| API-26.4 | A request ID that belongs to another claim | claimant1 | 404 | `INFORMATION_REQUEST_NOT_FOUND` |
+| API-26.5 | answer blank | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-26.6 | informationRequestId missing | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-26.7 | answer of 4001 characters | claimant1 | 400 | `VALIDATION_FAILED` |
+| API-26.8 | Unknown claim | claimant1 | 404 | `CLAIM_NOT_FOUND` |
+| API-26.9 | Another claimant tries to answer | claimant2 | 404 | `CLAIM_NOT_FOUND` |
+| API-26.10 | A claims officer may not answer for the claimant | officer1 | 403 | `FORBIDDEN` |
+| API-26.11 | The request is still OPEN after those refusals | claimant1 | 200 |  |
+
+### 17.2 When a service this one depends on is down (503 and 502)
+
+Run live by stopping the scratch User Service and then the scratch Claim Service (only processes started for the test). The dependency graph is Assessment calls Claim, Claim calls User, so the cases below are the ones that cross a service boundary.
+
+| ID | Scenario | Caller | Observed status | Observed `code` |
+|---|---|---|---|---|
+| OUT-1.1 | User Service down: a manager assigns a claim (the officer cannot be checked) | manager1 | 503 | `DOWNSTREAM_UNAVAILABLE` |
+| OUT-1.2 | User Service down: an administrator assigns | admin1 | 503 | `DOWNSTREAM_UNAVAILABLE` |
+| OUT-1.3 | User Service down: an administrator reviews an unassigned claim as `officer1` through the **Assessment Service** (an assignment, so the Claim Service checks the officer) | admin1 | **502** | `DOWNSTREAM_ERROR` |
+| OUT-1.4 | User Service down: an officer takes a claim for themselves (no lookup is needed) | officer1 | 200 | |
+| OUT-1.5 | User Service down: an officer reviews an unassigned claim as themselves | officer1 | 200 | |
+| OUT-1.6 | User Service down: the management summary (tokens issued earlier are still accepted, they are checked locally) | manager1 | 200 | |
+| OUT-1.7 | User Service down: login | nobody | no HTTP answer, the connection is refused | |
+| OUT-2.1 | Claim Service down: review | officer1 | 503 | `DOWNSTREAM_UNAVAILABLE` |
+| OUT-2.2 | Claim Service down: assessment history | officer1 | 503 | `DOWNSTREAM_UNAVAILABLE` |
+| OUT-2.3 | Claim Service down: decision | officer1 | 503 | `DOWNSTREAM_UNAVAILABLE` |
+| OUT-2.4 | Claim Service down: settlement | officer1 | 503 | `DOWNSTREAM_UNAVAILABLE` |
+| OUT-2.5 | Claim Service down: information request | officer1 | 503 | `DOWNSTREAM_UNAVAILABLE` |
+| OUT-2.6 | Claim Service down: list information requests | claimant1 | 503 | `DOWNSTREAM_UNAVAILABLE` |
+| OUT-2.7 | Claim Service down: answer an information request | claimant1 | 503 | `DOWNSTREAM_UNAVAILABLE` |
+| OUT-2.8 | Claim Service down: the Assessment Service's own health (it checks only its own database) | nobody | 200 | |
+| OUT-2.9 | Claim Service down: any Claim Service route | claimant1 | no HTTP answer, the connection is refused | |
+
+**OUT-1.3 is a 502, not a 503, and that is the design, not a fault of the test.** The Assessment Service re-raises only the Claim Service's 400, 404 and 409 with the same status; any other answer, a 503 included, becomes `502 DOWNSTREAM_ERROR` ("Claim Service answered with HTTP 503 which this service cannot handle"). Here the Claim Service answered 503 because it could not reach the User Service, so a failure two hops away shows as 502 at the edge. OUT-1.1 and OUT-1.2 go straight to the Claim Service and show the 503 itself. The services never retry a call that changes state.
+
+For OUT-2.1 to OUT-2.7, reading the code shows each request fails on its first step (asking the Claim Service where the claim is) before anything is written; the databases were not inspected in this run.
+
+**D1. a manager assigns a claim while the User Service is down**
+
+Claim Service, as manager1: `POST /api/v1/officer/claims/CLM-2026-000210/assign`
+
+Request body:
+
+```json
+{
+  "officerId": "officer1"
+}
+```
+
+Response `503`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:27:57.317162700Z",
+  "status": 503,
+  "error": "Service Unavailable",
+  "code": "DOWNSTREAM_UNAVAILABLE",
+  "message": "User Service is unavailable or did not answer in time",
+  "path": "/api/v1/officer/claims/CLM-2026-000210/assign"
+}
+```
+
+**D2. an officer starts a review while the Claim Service is down**
+
+Assessment Service, as officer1: `POST /api/v1/officer/claims/CLM-2026-000210/review`
+
+Request body:
+
+```json
+{
+  "assessmentNotes": "will not be saved"
+}
+```
+
+Response `503`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:28:12.836002500Z",
+  "status": 503,
+  "error": "Service Unavailable",
+  "code": "DOWNSTREAM_UNAVAILABLE",
+  "message": "Claim Service is unavailable or did not answer in time",
+  "path": "/api/v1/officer/claims/CLM-2026-000210/review"
+}
+```
+
+## 18. Swagger test order
+
+Open the Swagger UI of the service that owns each step (`http://localhost:8185/swagger-ui/index.html` for the User Service, `8181` for the Claim Service, `8182` for the Assessment Service). To act as a person, call `POST /api/v1/auth/login` on the User Service, copy the `accessToken` **without** the word `Bearer`, choose **Authorize** (the padlock) on the service you are about to use, paste it and confirm. Each Swagger UI keeps its own token, and **Authorize must be repeated whenever the acting person changes** (a pasted token survives a page reload, `persist-authorization`). The requests and responses of every step are in sections 14, 15 and below.
+
+| Step | Swagger UI | Act as | Operation | Input | Expected | Real evidence |
+|---|---|---|---|---|---|---|
+| 1 | User | nobody, then `admin1` | `POST /api/v1/auth/login` | `{"username":"admin1","password":"password123"}`; copy `accessToken`, Authorize on the User Service | 200, `role` `ADMIN` | section 14.3, L1 |
+| 2 | User | `admin1` | `POST /api/v1/users` four times | `officer2` CLAIMS_OFFICER, `manager2` MANAGER, `claimant2` CLAIMANT (and `admin2` ADMIN) | 201 each | section 14.2 |
+| 3 | Claim | `claimant1` (log in, Authorize on the Claim Service) | `POST /api/v1/claims` | the body of F1-01; copy `claimId` | 201, `SUBMITTED` | F1-01 |
+| 4 | Claim | `manager1` | `POST /api/v1/officer/claims/{claimId}/assign` | `{"officerId":"officer1"}` | 200, still `SUBMITTED` | F1-07 |
+| 5 | Assessment | `officer1` | `POST /api/v1/officer/claims/{claimId}/review` | `{"assessmentNotes":"..."}` | 200, `UNDER_REVIEW` | F1-09 |
+| 6 | Assessment | `officer1` | `POST /api/v1/officer/claims/{claimId}/information-requests` | `{"question":"..."}`; copy `informationRequestId` | 201, `OPEN`; the claim is `MORE_INFO_REQUIRED` | F1-10 |
+| 7 | Assessment | `claimant1` | `POST /api/v1/claims/{claimId}/information` | `{"informationRequestId":"IR-...","answer":"..."}` | 200, `ANSWERED`; the claim is `UNDER_REVIEW` again by itself | F1-12 |
+| 8 | Assessment | `officer1` | `POST /api/v1/officer/claims/{claimId}/decision` | `APPROVED`, `approvedAmount` not above the claimed amount, the claim's currency | 200, `APPROVED` | F1-13 |
+| 9 | Assessment | `officer1` | `POST /api/v1/officer/claims/{claimId}/settlement` | `{"settlementNote":"..."}` | 200, `SETTLED` | F1-15 |
+| 10 | Claim, Assessment | `claimant1`, `officer1` | verify histories: `GET /claims/{claimId}/history`, `/assignments`, `/updates` (Claim); `GET /officer/claims/{claimId}/assessments`, `GET /claims/{claimId}/information-requests` (Assessment) | the claim ID | 200: six status rows, one assignment row (`actor` manager1), one edit, assessment entries `NOTE`, `APPROVED`, `SETTLED` | F1-05, F1-08, F1-11, F1-17, F1-18 |
+| 11 | Claim | `manager1` | verify reports: `GET /api/v1/management/summary`, `GET /api/v1/management/officers` | none | 200; the settled claim has left the outstanding liability; `officer1` shows 1 approved and 1 settled | F1-14, F2-09, F2-10 |
+| 12 | Claim | `claimant2` | `POST /api/v1/claims` (a second claim) | the body of F2-01 | 201 | F2-01 |
+| 13 | Claim, Assessment | `manager2`, then `officer2` | assign to `officer2`, review, then `POST .../decision` with `REJECTED` and no amount; then try a settlement | see F2-02 to F2-05 | 200, 200, 200 `REJECTED`; the settlement is **409** | F2-02 to F2-05 |
+| 14 | User, Claim | `admin1`, then `manager2` | `PUT /api/v1/users/officer2/active` `{"active":false}`; log in as `officer2`; assign a new claim to `officer2`; reactivate | see S14-1 to S14-6 | 200; login **401** `INVALID_CREDENTIALS`; assignment **400** `INVALID_OFFICER`; 200; deactivating yourself **409** | S14-1 to S14-6 |
+| 15 | User, Claim | `admin1`, `claimant2` | `PUT /api/v1/users/claimant2/role` to `CLAIMS_OFFICER`; the old token; a new login; submit a claim; demote | see S15-1 to S15-7 | 200; the old token still acts as a claimant (no revocation); the new login has the new role and cannot submit a claim (**403**); changing your own role **409**; role `SERVICE` **400** | S15-1 to S15-7 |
+
+Steps 14 and 15 are the only ones that change accounts; the results (real requests and responses):
+
+**S14-1. deactivate officer2**
+
+User Service, as admin1: `PUT /api/v1/users/officer2/active`
+
+Request body:
+
+```json
+{
+  "active": false
+}
+```
+
+Response `200`:
+
+```json
+{
+  "username": "officer2",
+  "role": "CLAIMS_OFFICER",
+  "active": false,
+  "createdAt": "2026-10-27T04:21:35.135681Z"
+}
+```
+
+**S14-2. a deactivated user cannot log in (same 401 as a wrong password)**
+
+User Service, without a token: `POST /api/v1/auth/login`
+
+Request body:
+
+```json
+{
+  "username": "officer2",
+  "password": "password123"
+}
+```
+
+Response `401`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:21:38.078292500Z",
+  "status": 401,
+  "error": "Unauthorized",
+  "code": "INVALID_CREDENTIALS",
+  "message": "Invalid username or password",
+  "path": "/api/v1/auth/login"
+}
+```
+
+**S14-3. claimant1 submits a third claim, to try the assignment**
+
+Claim Service, as claimant1: `POST /api/v1/claims`
+
+Request body:
+
+```json
+{
+  "claimantName": "Asha Rao",
+  "claimantEmail": "asha.rao@example.com",
+  "policyNumber": "POL-2026-0001",
+  "market": "SG",
+  "claimType": "MOTOR",
+  "incidentDescription": "Windscreen cracked by a stone on the expressway",
+  "incidentDate": "2026-10-22",
+  "claimedAmount": 600.00,
+  "currency": "INR"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "id": 3,
+  "claimId": "CLM-2026-000103",
+  "claimantId": "claimant1",
+  "claimantName": "Asha Rao",
+  "claimantEmail": "asha.rao@example.com",
+  "policyNumber": "POL-2026-0001",
+  "market": "SG",
+  "claimType": "MOTOR",
+  "incidentDescription": "Windscreen cracked by a stone on the expressway",
+  "incidentDate": "2026-10-22",
+  "claimedAmount": 600.00,
+  "approvedAmount": null,
+  "currency": "INR",
+  "status": "SUBMITTED",
+  "assignedOfficerId": null,
+  "decisionReason": null,
+  "decidedAt": null,
+  "settledAt": null,
+  "createdAt": "2026-10-27T04:21:38.089333800Z",
+  "updatedAt": "2026-10-27T04:21:38.089333800Z"
+}
+```
+
+**S14-4. a deactivated officer cannot be assigned a claim**
+
+Claim Service, as manager2: `POST /api/v1/officer/claims/CLM-2026-000103/assign`
+
+Request body:
+
+```json
+{
+  "officerId": "officer2"
+}
+```
+
+Response `400`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:21:38.109634400Z",
+  "status": 400,
+  "error": "Bad Request",
+  "code": "INVALID_OFFICER",
+  "message": "officer2 is not an active claims officer",
+  "path": "/api/v1/officer/claims/CLM-2026-000103/assign"
+}
+```
+
+**S14-5. reactivate officer2**
+
+User Service, as admin1: `PUT /api/v1/users/officer2/active`
+
+Request body:
+
+```json
+{
+  "active": true
+}
+```
+
+Response `200`:
+
+```json
+{
+  "username": "officer2",
+  "role": "CLAIMS_OFFICER",
+  "active": true,
+  "createdAt": "2026-10-27T04:21:35.135681Z"
+}
+```
+
+**S14-6. an administrator cannot deactivate themselves**
+
+User Service, as admin1: `PUT /api/v1/users/admin1/active`
+
+Request body:
+
+```json
+{
+  "active": false
+}
+```
+
+Response `409`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:21:38.131508500Z",
+  "status": 409,
+  "error": "Conflict",
+  "code": "CANNOT_DEACTIVATE_SELF",
+  "message": "You cannot deactivate your own account",
+  "path": "/api/v1/users/admin1/active"
+}
+```
+
+**S15-1. promote claimant2 to CLAIMS_OFFICER**
+
+User Service, as admin1: `PUT /api/v1/users/claimant2/role`
+
+Request body:
+
+```json
+{
+  "role": "CLAIMS_OFFICER"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "username": "claimant2",
+  "role": "CLAIMS_OFFICER",
+  "active": true,
+  "createdAt": "2026-10-27T04:21:35.266241Z"
+}
+```
+
+**S15-2. the token claimant2 already holds keeps the old role until it expires (documented limitation, no revocation)**
+
+Claim Service, as claimant2: `GET /api/v1/claims?page=0&size=1`
+
+The old token still works as a `CLAIMANT`: the list contains only claimant2's own claim.
+
+Response `200`:
+
+```json
+{
+  "content": [
+    {
+      "id": 2,
+      "claimId": "CLM-2026-000102",
+      "claimantId": "claimant2",
+      "claimantName": "Wei Lim",
+      "policyNumber": "HK-PROP-0077",
+      "market": "HK",
+      "claimType": "PROPERTY",
+      "claimedAmount": 18000.00,
+      "approvedAmount": null,
+      "currency": "HKD",
+      "status": "REJECTED",
+      "assignedOfficerId": "officer2",
+      "createdAt": "2026-10-27T04:21:37.785655Z"
+    }
+  ],
+  "page": 0,
+  "size": 1,
+  "totalElements": 1,
+  "totalPages": 1
+}
+```
+
+**S15-3. a new login carries the new role**
+
+User Service, without a token: `POST /api/v1/auth/login`
+
+Request body:
+
+```json
+{
+  "username": "claimant2",
+  "password": "password123"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "accessToken": "<JWT>",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "username": "claimant2",
+  "role": "CLAIMS_OFFICER"
+}
+```
+
+**S15-4. a claims officer cannot submit a claim**
+
+Claim Service, as claimant2 (now CLAIMS_OFFICER): `POST /api/v1/claims`
+
+Request body:
+
+```json
+{
+  "claimantName": "x",
+  "claimantEmail": "x@example.com",
+  "policyNumber": "POL-1",
+  "market": "SG",
+  "claimType": "MOTOR",
+  "incidentDescription": "x",
+  "incidentDate": "2026-10-01",
+  "claimedAmount": 1.00,
+  "currency": "INR"
+}
+```
+
+Response `403`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:21:38.241922200Z",
+  "status": 403,
+  "error": "Forbidden",
+  "code": "FORBIDDEN",
+  "message": "Your role is not allowed to use this route",
+  "path": "/api/v1/claims"
+}
+```
+
+**S15-5. demote claimant2 back to CLAIMANT**
+
+User Service, as admin1: `PUT /api/v1/users/claimant2/role`
+
+Request body:
+
+```json
+{
+  "role": "CLAIMANT"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "username": "claimant2",
+  "role": "CLAIMANT",
+  "active": true,
+  "createdAt": "2026-10-27T04:21:35.266241Z"
+}
+```
+
+**S15-6. an administrator cannot change their own role**
+
+User Service, as admin1: `PUT /api/v1/users/admin1/role`
+
+Request body:
+
+```json
+{
+  "role": "MANAGER"
+}
+```
+
+Response `409`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:21:38.266114Z",
+  "status": 409,
+  "error": "Conflict",
+  "code": "CANNOT_CHANGE_OWN_ROLE",
+  "message": "You cannot change your own role",
+  "path": "/api/v1/users/admin1/role"
+}
+```
+
+**S15-7. SERVICE is not a role a user can have**
+
+User Service, as admin1: `PUT /api/v1/users/claimant2/role`
+
+Request body:
+
+```json
+{
+  "role": "SERVICE"
+}
+```
+
+Response `400`:
+
+```json
+{
+  "timestamp": "2026-10-27T04:21:38.273681100Z",
+  "status": 400,
+  "error": "Bad Request",
+  "code": "INVALID_ROLE",
+  "message": "SERVICE is not a role a user can have",
+  "path": "/api/v1/users/claimant2/role"
+}
+```
+
+## 19. Postman collection
+
+### 19.1 Variables
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `{{user-service}}` | `http://localhost:8185` | base URL of the User Service |
+| `{{claim-service}}` | `http://localhost:8181` | base URL of the Claim Service |
+| `{{assessment-service}}` | `http://localhost:8182` | base URL of the Assessment Service |
+| `{{token}}` | empty | the access token of the person currently acting. Every Login request sets it; every other request sends it as a Bearer token (collection-level authorisation) |
+
+The collection also uses five helper variables, all collection variables: `claimId` (set by Create Claim), `informationRequestId` (set by Information Request), `officerId` (default `officer1`, used by Assign Claim), `username` (default `officer2`, used by Get User, Change Role, Deactivate and Activate) and `role` (default `CLAIMS_OFFICER`, used by Change Role). Change the three base URLs if the services run on other ports.
+
+### 19.2 Folders and requests (38 requests)
+
+| Folder | Request | Method and path | Act as (log in first) | Expected |
+|---|---|---|---|---|
+| Authentication | Login admin1, admin2, officer1, officer2, manager1, manager2, claimant1, claimant2 | `POST {{user-service}}/api/v1/auth/login` | none | 200, sets `{{token}}` |
+| Authentication | Register | `POST {{user-service}}/api/v1/auth/register` | none | 201 (the name uses `{{$timestamp}}` so it is new each time) |
+| Authentication | Me | `GET {{user-service}}/api/v1/users/me` | any person | 200 |
+| User Management | Create User admin2, officer2, manager2, claimant2 | `POST {{user-service}}/api/v1/users` | admin1 | 201, or 409 if it already exists |
+| User Management | List Users | `GET {{user-service}}/api/v1/users?page=0&size=20` | admin1 | 200 |
+| User Management | Get User | `GET {{user-service}}/api/v1/users/{{username}}` | admin1 | 200 |
+| User Management | Change Role | `PUT {{user-service}}/api/v1/users/{{username}}/role` | admin1 | 200 |
+| User Management | Deactivate User, Activate User | `PUT {{user-service}}/api/v1/users/{{username}}/active` | admin1 | 200 |
+| Claim Management | Create Claim | `POST {{claim-service}}/api/v1/claims` | a claimant | 201, sets `{{claimId}}` |
+| Claim Management | List Claims | `GET {{claim-service}}/api/v1/claims?page=0&size=20` | claimant, officer or manager | 200 |
+| Claim Management | Get Claim | `GET {{claim-service}}/api/v1/claims/{{claimId}}` | claimant (own), officer, manager | 200 |
+| Claim Management | Patch Claim | `PATCH {{claim-service}}/api/v1/claims/{{claimId}}` | the claimant, while `SUBMITTED` | 200 |
+| Claim Management | Claim History, Assignment History, Update History | `GET {{claim-service}}/api/v1/claims/{{claimId}}/history`, `/assignments`, `/updates` | claimant (own), officer, manager | 200 |
+| Claim Management | Officer Claims | `GET {{claim-service}}/api/v1/officer/claims?assigned=false&page=0&size=20` | officer or manager | 200 |
+| Claim Management | Assign Claim | `POST {{claim-service}}/api/v1/officer/claims/{{claimId}}/assign` | manager (any active officer) or officer (self) | 200 |
+| Assessment Management | Review | `POST {{assessment-service}}/api/v1/officer/claims/{{claimId}}/review` | the claims officer | 200 |
+| Assessment Management | Assessment History | `GET {{assessment-service}}/api/v1/officer/claims/{{claimId}}/assessments` | the claims officer | 200 |
+| Assessment Management | Information Request | `POST {{assessment-service}}/api/v1/officer/claims/{{claimId}}/information-requests` | the claims officer | 201, sets `{{informationRequestId}}` |
+| Assessment Management | Information Request List | `GET {{assessment-service}}/api/v1/claims/{{claimId}}/information-requests` | claimant, officer, manager | 200 |
+| Assessment Management | Information Answer | `POST {{assessment-service}}/api/v1/claims/{{claimId}}/information` | the claimant | 200 |
+| Assessment Management | Decision Approve, Decision Reject | `POST {{assessment-service}}/api/v1/officer/claims/{{claimId}}/decision` | the claims officer | 200 |
+| Assessment Management | Settlement | `POST {{assessment-service}}/api/v1/officer/claims/{{claimId}}/settlement` | the claims officer | 200 |
+| Reports | Management Summary, Officer Metrics | `GET {{claim-service}}/api/v1/management/summary`, `/officers` | manager | 200 |
+
+### 19.3 Run order
+
+Because one `{{token}}` holds one person, **run a Login request each time the acting person changes**. Flow 1 (section 15.1): Login claimant1, Create Claim, Get Claim, List Claims, Patch Claim, Update History, Login officer1, Officer Claims, Login manager1 (`officerId` = `officer1`), Assign Claim, Assignment History, Login officer1, Review, Information Request, Login claimant1, Information Request List, Information Answer, Login officer1, Decision Approve, Settlement, Assessment History, Login claimant1, Claim History, Login manager1, Management Summary, Officer Metrics. Flow 2 (section 15.2): Login claimant2, Create Claim, Login manager2 (`officerId` = `officer2`), Assign Claim, Login officer2, Review, Decision Reject, Settlement, Login claimant2, Claim History. In Flow 2 the **Settlement request must show a failed built-in test**: its test expects 200, and the 409 it receives is the correct, expected refusal of settling a rejected claim. User management: Login admin1, the four Create User requests, Register, Me, List Users, Get User (`username` = `officer2`), Change Role (`username` = `claimant2`, `role` = `CLAIMANT`), Deactivate User and Activate User (`username` = `officer2`).
+
+### 19.4 The collection (Postman v2.1)
+
+Save the block as `chubb-claims.postman_collection.json` and import it (**Import**, then the file). Each request carries a test script that checks the status and, where needed, stores a variable.
+
+```json
+{
+  "info": { "name": "Chubb APAC Claims Backend", "description": "26 public endpoints of the User, Claim and Assessment services. Log in as the right user first: the Login requests set {{token}}.", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{token}}", "type": "string" } ] },
+  "variable": [
+    { "key": "user-service", "value": "http://localhost:8185" },
+    { "key": "claim-service", "value": "http://localhost:8181" },
+    { "key": "assessment-service", "value": "http://localhost:8182" },
+    { "key": "token", "value": "" },
+    { "key": "claimId", "value": "" },
+    { "key": "informationRequestId", "value": "" },
+    { "key": "officerId", "value": "officer1" },
+    { "key": "username", "value": "officer2" },
+    { "key": "role", "value": "CLAIMS_OFFICER" }
+  ],
+  "item": [
+    { "name": "Authentication", "item": [
+      { "name": "Login admin1",
+        "request": {"method":"POST","auth":{"type":"noauth"},"header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"admin1\",\"password\":\"password123\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/auth/login"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });","pm.collectionVariables.set(\"token\", pm.response.json().accessToken);"]}}] },
+      { "name": "Login admin2",
+        "request": {"method":"POST","auth":{"type":"noauth"},"header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"admin2\",\"password\":\"password123\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/auth/login"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });","pm.collectionVariables.set(\"token\", pm.response.json().accessToken);"]}}] },
+      { "name": "Login officer1",
+        "request": {"method":"POST","auth":{"type":"noauth"},"header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"officer1\",\"password\":\"password123\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/auth/login"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });","pm.collectionVariables.set(\"token\", pm.response.json().accessToken);"]}}] },
+      { "name": "Login officer2",
+        "request": {"method":"POST","auth":{"type":"noauth"},"header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"officer2\",\"password\":\"password123\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/auth/login"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });","pm.collectionVariables.set(\"token\", pm.response.json().accessToken);"]}}] },
+      { "name": "Login manager1",
+        "request": {"method":"POST","auth":{"type":"noauth"},"header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"manager1\",\"password\":\"password123\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/auth/login"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });","pm.collectionVariables.set(\"token\", pm.response.json().accessToken);"]}}] },
+      { "name": "Login manager2",
+        "request": {"method":"POST","auth":{"type":"noauth"},"header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"manager2\",\"password\":\"password123\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/auth/login"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });","pm.collectionVariables.set(\"token\", pm.response.json().accessToken);"]}}] },
+      { "name": "Login claimant1",
+        "request": {"method":"POST","auth":{"type":"noauth"},"header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"claimant1\",\"password\":\"password123\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/auth/login"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });","pm.collectionVariables.set(\"token\", pm.response.json().accessToken);"]}}] },
+      { "name": "Login claimant2",
+        "request": {"method":"POST","auth":{"type":"noauth"},"header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"claimant2\",\"password\":\"password123\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/auth/login"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });","pm.collectionVariables.set(\"token\", pm.response.json().accessToken);"]}}] },
+      { "name": "Register",
+        "request": {"method":"POST","auth":{"type":"noauth"},"header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"user.{{$timestamp}}\",\"password\":\"correct-horse-battery\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/auth/register"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });"]}}] },
+      { "name": "Me",
+        "request": {"method":"GET","url":"{{user-service}}/api/v1/users/me"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] }
+    ] },
+    { "name": "User Management", "item": [
+      { "name": "Create User admin2",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"admin2\",\"password\":\"password123\",\"role\":\"ADMIN\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/users"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is one of 201 or 409\", function () { pm.expect(pm.response.code).to.be.oneOf([201, 409]); });"]}}] },
+      { "name": "Create User officer2",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"officer2\",\"password\":\"password123\",\"role\":\"CLAIMS_OFFICER\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/users"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is one of 201 or 409\", function () { pm.expect(pm.response.code).to.be.oneOf([201, 409]); });"]}}] },
+      { "name": "Create User manager2",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"manager2\",\"password\":\"password123\",\"role\":\"MANAGER\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/users"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is one of 201 or 409\", function () { pm.expect(pm.response.code).to.be.oneOf([201, 409]); });"]}}] },
+      { "name": "Create User claimant2",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"username\":\"claimant2\",\"password\":\"password123\",\"role\":\"CLAIMANT\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/users"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is one of 201 or 409\", function () { pm.expect(pm.response.code).to.be.oneOf([201, 409]); });"]}}] },
+      { "name": "List Users",
+        "request": {"method":"GET","url":"{{user-service}}/api/v1/users?page=0&size=20"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Get User",
+        "request": {"method":"GET","url":"{{user-service}}/api/v1/users/{{username}}"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Change Role",
+        "request": {"method":"PUT","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"role\":\"{{role}}\"}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/users/{{username}}/role"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Deactivate User",
+        "request": {"method":"PUT","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"active\":false}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/users/{{username}}/active"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Activate User",
+        "request": {"method":"PUT","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"active\":true}","options":{"raw":{"language":"json"}}},"url":"{{user-service}}/api/v1/users/{{username}}/active"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] }
+    ] },
+    { "name": "Claim Management", "item": [
+      { "name": "Create Claim",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"claimantName\":\"Asha Rao\",\"claimantEmail\":\"asha.rao@example.com\",\"policyNumber\":\"POL-2026-0001\",\"market\":\"SG\",\"claimType\":\"MOTOR\",\"incidentDescription\":\"Rear-ended at a junction on Orchard Road\",\"incidentDate\":\"2026-10-20\",\"claimedAmount\":2400.00,\"currency\":\"INR\"}","options":{"raw":{"language":"json"}}},"url":"{{claim-service}}/api/v1/claims"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });","pm.collectionVariables.set(\"claimId\", pm.response.json().claimId);"]}}] },
+      { "name": "List Claims",
+        "request": {"method":"GET","url":"{{claim-service}}/api/v1/claims?page=0&size=20"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Get Claim",
+        "request": {"method":"GET","url":"{{claim-service}}/api/v1/claims/{{claimId}}"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Patch Claim",
+        "request": {"method":"PATCH","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"claimedAmount\":2500.00}","options":{"raw":{"language":"json"}}},"url":"{{claim-service}}/api/v1/claims/{{claimId}}"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Claim History",
+        "request": {"method":"GET","url":"{{claim-service}}/api/v1/claims/{{claimId}}/history"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Assignment History",
+        "request": {"method":"GET","url":"{{claim-service}}/api/v1/claims/{{claimId}}/assignments"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Update History",
+        "request": {"method":"GET","url":"{{claim-service}}/api/v1/claims/{{claimId}}/updates"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Officer Claims",
+        "request": {"method":"GET","url":"{{claim-service}}/api/v1/officer/claims?assigned=false&page=0&size=20"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Assign Claim",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"officerId\":\"{{officerId}}\"}","options":{"raw":{"language":"json"}}},"url":"{{claim-service}}/api/v1/officer/claims/{{claimId}}/assign"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] }
+    ] },
+    { "name": "Assessment Management", "item": [
+      { "name": "Review",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"assessmentNotes\":\"Photos match the description.\"}","options":{"raw":{"language":"json"}}},"url":"{{assessment-service}}/api/v1/officer/claims/{{claimId}}/review"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Assessment History",
+        "request": {"method":"GET","url":"{{assessment-service}}/api/v1/officer/claims/{{claimId}}/assessments"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Information Request",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"question\":\"Please send the repair estimate.\"}","options":{"raw":{"language":"json"}}},"url":"{{assessment-service}}/api/v1/officer/claims/{{claimId}}/information-requests"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });","pm.collectionVariables.set(\"informationRequestId\", pm.response.json().informationRequestId);"]}}] },
+      { "name": "Information Request List",
+        "request": {"method":"GET","url":"{{assessment-service}}/api/v1/claims/{{claimId}}/information-requests"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Information Answer",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"informationRequestId\":\"{{informationRequestId}}\",\"answer\":\"The workshop estimate is INR 2,200.\"}","options":{"raw":{"language":"json"}}},"url":"{{assessment-service}}/api/v1/claims/{{claimId}}/information"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Decision Approve",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"decision\":\"APPROVED\",\"decisionReason\":\"Covered under the policy.\",\"approvedAmount\":2200.00,\"currency\":\"INR\"}","options":{"raw":{"language":"json"}}},"url":"{{assessment-service}}/api/v1/officer/claims/{{claimId}}/decision"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Decision Reject",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"decision\":\"REJECTED\",\"decisionReason\":\"Excluded by the policy.\",\"currency\":\"INR\"}","options":{"raw":{"language":"json"}}},"url":"{{assessment-service}}/api/v1/officer/claims/{{claimId}}/decision"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Settlement",
+        "request": {"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"settlementNote\":\"Paid by bank transfer.\"}","options":{"raw":{"language":"json"}}},"url":"{{assessment-service}}/api/v1/officer/claims/{{claimId}}/settlement"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] }
+    ] },
+    { "name": "Reports", "item": [
+      { "name": "Management Summary",
+        "request": {"method":"GET","url":"{{claim-service}}/api/v1/management/summary"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] },
+      { "name": "Officer Metrics",
+        "request": {"method":"GET","url":"{{claim-service}}/api/v1/management/officers"},
+        "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"]}}] }
+    ] }
+  ]
+}
+```
+
+### 19.5 What was and was not verified
+
+* The JSON was parsed successfully (valid JSON, 5 folders, 38 requests).
+* The **request definitions in it** (method, URL with variables, body, expected status, variable capture) were run through a small emulator that substitutes the variables and follows the run order of 19.3, against freshly started services: **48 requests, 0 failures** (an earlier attempt failed 14 requests because of a defect in the emulator, which sent an empty body with each GET; it was fixed and the run repeated). 37 of the 38 requests were executed that way; `Login admin2` was exercised separately (it returned `ADMIN`).
+* **Not verified:** the collection was **not imported into Postman**, and the JavaScript test scripts were **not executed by Postman**. They are one-line `pm.test(...)` and `pm.collectionVariables.set(...)` calls, but that is reading, not a result.
+
+## 20. Final coverage
+
+**Total public APIs: 26 = User Service 8 + Claim Service 11 + Assessment Service 7** (the `/internal/v1` routes, 6 on the Claim Service and 1 on the User Service, are service-to-service, are listed in section 3a and are not counted). All 26 have a role-matrix row, positive and negative scenarios, a place in the flows or the Swagger order, and a Postman request.
+
+| # (matrix) | Endpoint | Earlier numbering (sections 4 to 12) | Scenarios (positive + negative) | In the flows and steps | Postman request |
+|---|---|---|---|---|---|
+| 1 | `POST /api/v1/auth/register` | U1 | 11 (2 + 9) | UM1 | Register |
+| 2 | `POST /api/v1/auth/login` | U2 | 9 (3 + 6) | L1 to L8 | Login (eight) |
+| 3 | `GET /api/v1/users/me` | U3 | 4 (2 + 2) | UM2 | Me |
+| 4 | `POST /api/v1/users` | U4 | 7 (1 + 6) | C-admin2 to C-claimant2 | Create User (four) |
+| 5 | `GET /api/v1/users` | U5 | 6 (1 + 5) | UM3 | List Users |
+| 6 | `GET /api/v1/users/{username}` | U6 | 3 (1 + 2) | UM4 | Get User |
+| 7 | `PUT /api/v1/users/{username}/role` | U7 | 7 (1 + 6) | S15-1, S15-5 to S15-7 | Change Role |
+| 8 | `PUT /api/v1/users/{username}/active` | U8 | 7 (2 + 5) | S14-1, S14-5, S14-6 | Deactivate User, Activate User |
+| 9 | `POST /api/v1/claims` | 1 | 17 (2 + 15) | F1-01, F2-01, S14-3 | Create Claim |
+| 10 | `GET /api/v1/claims` | 15 | 7 (2 + 5) | F1-03, S15-2 | List Claims |
+| 11 | `GET /api/v1/claims/{claimId}` | 2 | 6 (2 + 4) | F1-02, F1-16, F2-06 | Get Claim |
+| 12 | `PATCH /api/v1/claims/{claimId}` | 16 | 10 (2 + 8) | F1-04 | Patch Claim |
+| 13 | `GET /api/v1/claims/{claimId}/history` | 12 | 5 (1 + 4) | F1-17, F2-07 | Claim History |
+| 14 | `GET /api/v1/claims/{claimId}/assignments` | 13 | 5 (1 + 4) | F1-08 | Assignment History |
+| 15 | `GET /api/v1/claims/{claimId}/updates` | 17 | 5 (1 + 4) | F1-05 | Update History |
+| 16 | `GET /api/v1/officer/claims` | 3 | 6 (2 + 4) | F1-06 | Officer Claims |
+| 17 | `POST /api/v1/officer/claims/{claimId}/assign` | 4 | 13 (3 + 10) | F1-07, F2-02, S14-4 | Assign Claim |
+| 18 | `GET /api/v1/management/summary` | 10 | 3 (1 + 2) | F1-14, F2-09 | Management Summary |
+| 19 | `GET /api/v1/management/officers` | 11 | 3 (1 + 2) | F2-10 | Officer Metrics |
+| 20 | `POST /api/v1/officer/claims/{claimId}/review` | 5 | 12 (1 + 11) | F1-09, F2-03 | Review |
+| 21 | `GET /api/v1/officer/claims/{claimId}/assessments` | 14 | 5 (1 + 4) | F1-18, F2-08 | Assessment History |
+| 22 | `POST /api/v1/officer/claims/{claimId}/decision` | 9 | 20 (3 + 17) | F1-13 (approve), F2-04 (reject) | Decision Approve, Decision Reject |
+| 23 | `POST /api/v1/officer/claims/{claimId}/settlement` | 18 | 10 (2 + 8) | F1-15, F2-05 | Settlement |
+| 24 | `POST /api/v1/officer/claims/{claimId}/information-requests` | 6 | 11 (1 + 10) | F1-10 | Information Request |
+| 25 | `GET /api/v1/claims/{claimId}/information-requests` | 7 | 7 (4 + 3) | F1-11 | Information Request List |
+| 26 | `POST /api/v1/claims/{claimId}/information` | 8 | 11 (2 + 9) | F1-12 | Information Answer |
+
+Scenarios total 210 (45 positive, 165 negative), plus the 16 downstream-failure cases of section 17.2 (503 and 502 included).
+
+### 20.1 Results of this update (2026-10-27)
+
+All of it was run in a scratch copy of the sources at commit `ee90578` (the later commit `b33e4a3`, which hard-codes the PostgreSQL datasource, was not tested), against jars built from it, on spare ports (28185, 28181, 28182), with in-memory H2 and a secret generated by `start-all.ps1`. Nothing was run on PostgreSQL.
+
+| Check | Result |
+|---|---|
+| Two flows (sections 15.1, 15.2), steps 14 and 15 (section 18) | every request returned the status the document states (0 mismatches) |
+| Role matrix, 26 endpoints by 5 identities (section 16) | 130 of 130 cells matched the hand-written expectation |
+| Scenario catalogue (section 17.1) | 210 of 210 matched, status and `code` |
+| Downstream failures (section 17.2) | 16 cases; 15 matched the expectation written beforehand, one (OUT-1.3) turned out to be 502 instead of 503, which is the documented design and is recorded as observed |
+| Postman collection (section 19) | JSON valid; definitions run through an emulator, 48 requests, 0 failures; **not imported into Postman** |
+| Existing automated suites (`clean test`, microservices) | **578 of 580 passed, 2 failed** (see the update in section 12); the monolith 142 of 142 |
+
+### 20.2 Not covered, or not verified
+
+* **PostgreSQL**: everything in section 13 is unverified; the migrations Claim V5, User V2 and Assessment V2, claim creation, row locking and the concurrency tests have never run there.
+* **Postman and the Swagger UI by hand** (the Authorize button): not exercised.
+* `INVALID_MARKET` (needs `claims.markets.allowed`), `INFORMATION_REQUEST_ALREADY_ANSWERED` (not reachable through the API, see section 17.1), a forced `500 INTERNAL_ERROR`, the `DOWN` health answer, an expired token against running jars, and the default ports (8181, 8182, 8185) live: not exercised in this update.
+* The two failing automated tests and the fallback value for `JWT_SECRET` behind them are described in the update at the top of "Verified results" in section 12; they are not changed by this document.

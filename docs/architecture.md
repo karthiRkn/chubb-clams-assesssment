@@ -5,9 +5,9 @@
 > and property below was read from the source, not copied from the other documents. Where this file and `README.md`,
 > `API_TEST_CASES.md`, `DESIGN_DECISIONS.md` or `CLAUDE.md` disagree, this file says so (section 11).
 >
-> **Scope of this file:** the **committed** state (`ee90578`). While this task was running, the three services'
-> `application.properties` were edited by someone else (modified 08:22, uncommitted). Those edits are described in section
-> 11.3 and are **not** reflected anywhere else in this file.
+> **Scope of this file:** the code as committed in `ee90578`, which is what was built and run. While the task was running, the three
+> services' `application.properties` were edited by someone else and then committed as `b33e4a3` (not pushed). That commit is described
+> in section 11.3 and is **not** reflected anywhere else in this file, and it was not tested.
 >
 > **This is a demonstration system. It is not secure enough to call production-ready** (shared signing secret, demo
 > users on by default, no revocation, no lockout, no TLS; section 11).
@@ -614,8 +614,8 @@ which the original monolith also uses: do not start both at once on defaults.
 
 ### 9.2 Properties and environment variables
 
-Defaults are in `src/main/resources/application.properties` of each service, **as committed in `ee90578`** (the uncommitted
-edits in section 11.3 change the datasource lines). Values below are placeholders where a value would be secret; **no secret
+Defaults are in `src/main/resources/application.properties` of each service, **as committed in `ee90578`** (the later
+commit `b33e4a3`, section 11.3, changes the datasource lines). Values below are placeholders where a value would be secret; **no secret
 or password value is reproduced in this file.**
 
 | Property | Environment variable | Service | Default in the file |
@@ -860,26 +860,30 @@ was touched:
 * **Not changed.** This task may not touch Java, Maven, configuration or security files. Fixing it means restoring
   `${JWT_SECRET:}` in the three files and treating the committed value as exposed. That is the owner's decision.
 
-### 11.3 Uncommitted edits appeared in the three `application.properties` during this task
+### 11.3 Commit `b33e4a3` hard-codes a PostgreSQL datasource, with passwords, in the three `application.properties`
 
-* **What was observed.** At the start `git status` was clean. At the end, `git status` showed
-  `microservices/{user,claim,assessment}-service/src/main/resources/application.properties` as modified (file times 08:22),
-  after this task's scratch copy had been taken. This task did not make those edits and did not revert them.
+* **What was observed.** At the start `git status` was clean. Midway, the three `application.properties` showed as modified (file
+  times 08:22), after this task's scratch copy had been taken. Later the same day they were committed as `b33e4a3` (2026-10-27
+  09:43, `chore: configure PostgreSQL datasource for user, claim, and assessment services`), which also contains the two files
+  this task had created. `main` is **2 commits ahead of `origin/main`**: neither `ee90578` nor `b33e4a3` has been pushed. This task
+  did not make those edits and did not revert them.
 * **What they do.** In each file the three in-memory H2 datasource lines are commented out and replaced by a PostgreSQL URL
-  (databases named `userdb`, `claimdb` and `assessmentdb`, which differ from the `user_db`, `claim_db`, `assessment_db` of the
-  `postgres` profile), a user name, a **literal database password**, the PostgreSQL driver class and
+  (databases `user_db`, `claimdb` and `assessmentdb`; the `postgres` profile names `user_db`, `claim_db` and `assessment_db`, so two of
+  the three differ), a user name, a **literal database password**, the PostgreSQL driver class and
   `spring.jpa.database-platform`. In the User and Claim files these are plain literals with no environment variable at all; in the
   Assessment file they are the fallbacks of `${ASSESSMENT_DB_URL:...}`, `${ASSESSMENT_DB_USERNAME:...}` and
   `${ASSESSMENT_DB_PASSWORD:...}`.
 * **Why it matters.** `CLAUDE.md` sections 6 and 9 forbid a credential in any properties file, and `JwtSecretConfigurationTest`
   and `DatabasePerServiceConfigurationTest` are written to fail the build on exactly this (predicted from reading those tests;
-  the edited files were **not** re-tested). The folder is synced by OneDrive, so the password should be treated as exposed. The
-  passwords are deliberately not repeated in this file or in the journal. A default start of these edited files needs a running
+  the committed `b33e4a3` was **not** re-tested). The password is now in the git history and in a OneDrive-synced folder, so it
+  should be treated as exposed and changed **before anything is pushed** (the commit is local, so the history can still be fixed).
+  The passwords are deliberately not repeated in this file or in the journal. A default start of these edited files needs a running
   PostgreSQL with those databases instead of in-memory H2.
 * **Flyway.** Starting a service against an existing PostgreSQL database will apply Claim V5, User V2 and Assessment V2 for the
   first time there (they have only ever run on H2). That changes stored data, so a backup should come first.
-* **Why the three owner services stopped (unconfirmed).** They were running when the task began and were gone by the end. The
-  edits above are consistent with the owner restarting them on PostgreSQL, but nothing in this task observed that.
+* **The owner's services.** Three Java services were listening on 8181, 8182 and 8185 when the task began, were gone at the end of
+  the first task, and were listening again (started from IntelliJ with a different JDK) during the second. None of this task's stop
+  commands named their PIDs. The edits above are consistent with the owner moving them to PostgreSQL; that was not observed.
 
 ### 11.4 Not implemented or not done
 
