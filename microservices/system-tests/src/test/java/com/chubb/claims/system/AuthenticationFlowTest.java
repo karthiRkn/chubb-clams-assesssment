@@ -32,6 +32,7 @@ class AuthenticationFlowTest extends SystemTestBase {
     private static final String PASSWORD = "journey-pass-123";
     private static final String OFFICER = "journey.officer";
     private static final String OTHER_OFFICER = "journey.officer.two";
+    private static final String OFFICER_LIST = "/internal/v1/users?role=CLAIMS_OFFICER&active=true";
     private static final String MANAGER = "journey.manager";
     private static final String CLAIMANT_A = "journey.claimant.a";
     private static final String CLAIMANT_B = "journey.claimant.b";
@@ -272,13 +273,17 @@ class AuthenticationFlowTest extends SystemTestBase {
         for (String token : new String[] {claimantA, officer, manager, admin}) {
             as(token, get("/internal/v1/claims/" + claimId + "/status")).andExpect(status().isForbidden());
             as(token, get("/internal/v1/users/" + OFFICER)).andExpect(status().isForbidden());
+            as(token, get(OFFICER_LIST)).andExpect(status().isForbidden());
         }
         as("", get("/internal/v1/claims/" + claimId + "/status")).andExpect(status().isUnauthorized());
         as("", get("/internal/v1/users/" + OFFICER)).andExpect(status().isUnauthorized());
+        as("", get(OFFICER_LIST)).andExpect(status().isUnauthorized());
         as(system.authorization(com.chubb.claims.common.security.Role.SERVICE, "somebody"), get("/internal/v1/claims/" + claimId + "/status"))
                 .andExpect(status().isOk());
         as(system.authorization(com.chubb.claims.common.security.Role.SERVICE, "somebody"), get("/internal/v1/users/" + OFFICER))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.role").value("CLAIMS_OFFICER")).andExpect(jsonPath("$.active").value(true));
+        as(system.authorization(com.chubb.claims.common.security.Role.SERVICE, "somebody"), get(OFFICER_LIST))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[?(@.username=='" + OFFICER + "')].role").value("CLAIMS_OFFICER"));
     }
 
     @Test

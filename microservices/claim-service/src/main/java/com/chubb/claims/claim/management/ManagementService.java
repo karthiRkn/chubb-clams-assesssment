@@ -3,6 +3,7 @@ package com.chubb.claims.claim.management;
 import com.chubb.claims.claim.ClaimRepository;
 import com.chubb.claims.claim.ClaimRepository.OfficerStatusAmount;
 import com.chubb.claims.claim.ClaimStatus;
+import com.chubb.claims.claim.client.UserClient;
 import com.chubb.claims.claim.management.ManagementSummary.CurrencyLiability;
 import com.chubb.claims.claim.management.OfficerMetrics.CurrencyTotal;
 import com.chubb.claims.claim.management.OfficerMetrics.OfficerEntry;
@@ -15,7 +16,9 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * The management reports (outstanding liability and per-officer workload). The grouping is done by the database
@@ -32,12 +35,19 @@ public class ManagementService {
 
     static final String OFFICER_NOTE =
             "Open workload is by CURRENT assignee (no reassignment history); decisions are by the deciding officer. "
+                    + "Every active claims officer is listed, with zeros when nothing is assigned to them; an officer who has been "
+                    + "switched off is listed only while they still have open or decided claims. "
                     + "Amounts are grouped by currency and never added across currencies.";
 
     private final ClaimRepository claims;
+    private final UserClient users;
+    private final TransactionTemplate readOnly;
 
-    public ManagementService(ClaimRepository claims) {
+    public ManagementService(ClaimRepository claims, UserClient users, PlatformTransactionManager transactions) {
         this.claims = claims;
+        this.users = users;
+        this.readOnly = new TransactionTemplate(transactions);
+        this.readOnly.setReadOnly(true);
     }
 
     @Transactional(readOnly = true)
@@ -59,9 +69,19 @@ public class ManagementService {
         return new ManagementSummary(Instant.now(), LIABILITY_NOTE, outstanding, liability, counts);
     }
 
-    /** The aggregates arrive grouped by officer, status and currency; only the small per-officer merge happens here. */
-    @Transactional(readOnly = true)
+    /**
+     * One entry per officer: every active claims officer (the User Service owns the accounts, so it is asked, and a claims
+     * query alone would never see an officer who has no claims) together with anyone who appears on a claim, such as an
+     * officer switched off since they were assigned work. The User Service is asked first, outside any transaction, so no
+     * database transaction stays open across that call; the claims are then read in one read-only transaction.
+     */
     public OfficerMetrics officerMetrics() {
+        List<String> activeOfficers = users.activeClaimsOfficers();
+        return readOnly.execute(status -> officerMetrics(activeOfficers));
+    }
+
+    /** The aggregates arrive grouped by officer, status and currency; only the small per-officer merge happens here. */
+    private OfficerMetrics officerMetrics(List<String> activeOfficers) {
         Map<String, Map<String, Long>> openByStatus = new TreeMap<>();
         Map<String, Map<String, CurrencyTotal>> openAmounts = new TreeMap<>();
         for (OfficerStatusAmount r : claims.officerWorkload()) {
@@ -85,7 +105,8 @@ public class ManagementService {
             }
         }
 
-        Set<String> officers = new TreeSet<>(openByStatus.keySet());
+        Set<String> officers = new TreeSet<>(activeOfficers);
+        officers.addAll(openByStatus.keySet());
         officers.addAll(decided.keySet());
 
         List<OfficerEntry> entries = officers.stream().map(id -> {

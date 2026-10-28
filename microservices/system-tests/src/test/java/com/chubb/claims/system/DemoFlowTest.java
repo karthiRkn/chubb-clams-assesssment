@@ -62,9 +62,10 @@ class DemoFlowTest extends SystemTestBase {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("SETTLED"));
         getJson("/api/v1/management/summary").andExpect(jsonPath("$.outstandingClaimCount").value(0))
                 .andExpect(jsonPath("$.countsByStatus.SETTLED").value(1));
-        getJson("/api/v1/management/officers").andExpect(jsonPath("$.officers[0].officerId").value("off-1007"))
-                .andExpect(jsonPath("$.officers[0].settledCount").value(1))
-                .andExpect(jsonPath("$.officers[0].approvedAmountByCurrency[0].amount").value(2200.00));
+        // every active officer is in the report now (the User Service lists them), so find this one by name, not by position
+        String officer = "$.officers[?(@.officerId=='off-1007')]";
+        getJson("/api/v1/management/officers").andExpect(jsonPath(officer + ".settledCount").value(1))
+                .andExpect(jsonPath(officer + ".approvedAmountByCurrency[0].amount").value(2200.00));
         getJson("/api/v1/claims/" + id + "/history").andExpect(jsonPath("$.length()").value(6));
         getJson("/api/v1/officer/claims/" + id + "/assessments").andExpect(jsonPath("$.length()").value(3));
         getJson("/api/v1/claims/CLM-2026-999999").andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("CLAIM_NOT_FOUND"));

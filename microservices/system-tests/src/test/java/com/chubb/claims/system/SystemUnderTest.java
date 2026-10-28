@@ -112,7 +112,7 @@ final class SystemUnderTest {
     /** Where a request path is served, as a gateway in front of the three services would route it (there is none). */
     String baseUrlFor(String path) {
         if (path.startsWith("/api/v1/auth/") || path.equals("/api/v1/users") || path.startsWith("/api/v1/users/")
-                || path.startsWith("/internal/v1/users/")) {
+                || path.equals("/internal/v1/users") || path.startsWith("/internal/v1/users/")) {
             return userUrl;
         }
         if (path.matches("/api/v1/officer/claims/[^/]+/(review|decision|settlement|assessments|information-requests)")

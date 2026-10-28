@@ -191,6 +191,19 @@ class ServiceFailureTest {
     }
 
     @Test
+    void theOfficerReportIs503WhenTheUserServiceIsDownRatherThanAReportMissingItsOfficers() throws Exception {
+        HttpMvc claims = to(claimWithoutUser);
+        newClaim(claims);
+        // the officers come from the User Service; without it the report cannot be complete, so it is refused, not shortened
+        claims.perform(get("/api/v1/management/officers")).andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("DOWNSTREAM_UNAVAILABLE"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("User Service")))
+                .andExpect(jsonPath("$.officers").doesNotExist());
+        // the summary reads only claims and still works
+        claims.perform(get("/api/v1/management/summary")).andExpect(status().isOk());
+    }
+
+    @Test
     void aClaimServiceWhoseJwtSecretDiffersFromTheUserServicesGets502NotAGuessAboutTheOfficer() throws Exception {
         // A manager's token signed with the misconfigured Claim Service's own secret is fine there, but the service token it
         // sends on to the User Service is signed with that same wrong secret, so the User Service refuses it.
@@ -210,6 +223,17 @@ class ServiceFailureTest {
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Bearer"))));
         assertThat(claimWithOtherSecret.getBean(JdbcTemplate.class)
                 .queryForObject("select count(*) from claim_assignment_history", Integer.class)).isZero();
+    }
+
+    @Test
+    void theOfficerReportIs502WhenTheUserServiceRefusesTheClaimServicesToken() throws Exception {
+        JwtUtil other = new JwtUtil(new JwtProperties(OTHER_SECRET, "chubb-claims", Duration.ofMinutes(5), Duration.ofSeconds(60)));
+        to(claimWithOtherSecret).perform(get("/api/v1/management/officers").header("Authorization",
+                        "Bearer " + other.generate("some.manager", Role.MANAGER)))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("DOWNSTREAM_ERROR"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Bearer"))))
+                .andExpect(jsonPath("$.officers").doesNotExist());
     }
 
     // ---- validation comes before any call ----

@@ -1,5 +1,7 @@
 package com.chubb.claims.claim;
 
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -7,13 +9,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.chubb.claims.common.ApiException;
 import com.chubb.claims.common.security.Role;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 
 /**
  * The management reports (outstanding liability, per-officer workload), now part of the Claim Service. They read the claims
- * table with GROUP BY queries, so these tests build real claims and check the numbers the database produces.
+ * table with GROUP BY queries, so these tests build real claims and check the numbers the database produces. The officer
+ * report also lists the active claims officers the User Service knows, so one with no claims shows up with zeros; the User
+ * Service is the mocked {@code users} client, which lists nobody unless a test says otherwise.
  */
 class ManagementReportTest extends IntegrationTestBase {
 
@@ -178,6 +184,90 @@ class ManagementReportTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.officers[1].approvedAmountByCurrency.length()").value(1))
                 .andExpect(jsonPath("$.officers[1].approvedAmountByCurrency[0].currency").value("INR"))
                 .andExpect(jsonPath("$.officers[1].approvedAmountByCurrency[0].amount").value(250.00));
+    }
+
+    // ---- officers with no claims: the list of officers comes from the User Service, not from the claims table ----
+
+    @Test
+    void anActiveOfficerWithNoClaimsIsReturnedWithZeroWorkload() throws Exception {
+        // users table: officer1 and officer2 are both active claims officers; only officer1 has a claim
+        when(users.activeClaimsOfficers()).thenReturn(List.of("officer1", "officer2"));
+        review(createClaim("SG", "MOTOR", "1000.00", "INR"), "officer1");
+
+        getJson(OFFICERS).andExpect(status().isOk())
+                .andExpect(jsonPath("$.officers.length()").value(2))
+                .andExpect(jsonPath("$.officers[0].officerId").value("officer1"))
+                .andExpect(jsonPath("$.officers[0].openClaimCount").value(1))
+                .andExpect(jsonPath("$.officers[0].openClaimsByStatus.UNDER_REVIEW").value(1))
+                .andExpect(jsonPath("$.officers[0].openClaimedAmountByCurrency[0].amount").value(1000.00))
+                // officer2 has nothing assigned and has decided nothing, and is still reported, in full
+                .andExpect(jsonPath("$.officers[1].officerId").value("officer2"))
+                .andExpect(jsonPath("$.officers[1].openClaimCount").value(0))
+                .andExpect(jsonPath("$.officers[1].openClaimsByStatus.length()").value(4))
+                .andExpect(jsonPath("$.officers[1].openClaimsByStatus.SUBMITTED").value(0))
+                .andExpect(jsonPath("$.officers[1].openClaimsByStatus.UNDER_REVIEW").value(0))
+                .andExpect(jsonPath("$.officers[1].openClaimsByStatus.MORE_INFO_REQUIRED").value(0))
+                .andExpect(jsonPath("$.officers[1].openClaimsByStatus.APPROVED").value(0))
+                .andExpect(jsonPath("$.officers[1].openClaimedAmountByCurrency").isArray())
+                .andExpect(jsonPath("$.officers[1].openClaimedAmountByCurrency.length()").value(0))
+                .andExpect(jsonPath("$.officers[1].decidedCount").value(0))
+                .andExpect(jsonPath("$.officers[1].approvedCount").value(0))
+                .andExpect(jsonPath("$.officers[1].settledCount").value(0))
+                .andExpect(jsonPath("$.officers[1].rejectedCount").value(0))
+                .andExpect(jsonPath("$.officers[1].approvedAmountByCurrency").isArray())
+                .andExpect(jsonPath("$.officers[1].approvedAmountByCurrency.length()").value(0));
+    }
+
+    @Test
+    void activeOfficersAreListedEvenWhenThereIsNoClaimAtAll() throws Exception {
+        when(users.activeClaimsOfficers()).thenReturn(List.of("officer1", "officer2"));
+        getJson(OFFICERS).andExpect(status().isOk())
+                .andExpect(jsonPath("$.officers.length()").value(2))
+                .andExpect(jsonPath("$.officers[0].officerId").value("officer1"))
+                .andExpect(jsonPath("$.officers[0].openClaimCount").value(0))
+                .andExpect(jsonPath("$.officers[1].officerId").value("officer2"))
+                .andExpect(jsonPath("$.officers[1].openClaimCount").value(0));
+    }
+
+    @Test
+    void anOfficerWhoIsActiveAndHasClaimsIsListedOnce() throws Exception {
+        when(users.activeClaimsOfficers()).thenReturn(List.of("officer1"));
+        assign(createClaim(), "officer1");
+        String id = createClaim();
+        review(id, "officer1");
+        reject(id, "INR", "officer1"); // officer1 appears as an assignee and as a decider
+        getJson(OFFICERS).andExpect(jsonPath("$.officers.length()").value(1))
+                .andExpect(jsonPath("$.officers[0].officerId").value("officer1"))
+                .andExpect(jsonPath("$.officers[0].openClaimCount").value(1))
+                .andExpect(jsonPath("$.officers[0].rejectedCount").value(1));
+    }
+
+    @Test
+    void anOfficerSwitchedOffSinceBeingAssignedWorkIsStillShownWhileTheyHaveClaims() throws Exception {
+        // officer2 is no longer in the active list, but still holds an open claim: that workload must not disappear
+        when(users.activeClaimsOfficers()).thenReturn(List.of("officer1"));
+        assign(createClaim("SG", "MOTOR", "300.00", "INR"), "officer2");
+        getJson(OFFICERS).andExpect(jsonPath("$.officers.length()").value(2))
+                .andExpect(jsonPath("$.officers[0].officerId").value("officer1"))
+                .andExpect(jsonPath("$.officers[0].openClaimCount").value(0))
+                .andExpect(jsonPath("$.officers[1].officerId").value("officer2"))
+                .andExpect(jsonPath("$.officers[1].openClaimCount").value(1));
+    }
+
+    @Test
+    void theOfficerReportIsRefusedNotShortenedWhenTheUserServiceCannotBeReached() throws Exception {
+        when(users.activeClaimsOfficers())
+                .thenThrow(ApiException.unavailable("DOWNSTREAM_UNAVAILABLE", "User Service is unavailable or did not answer in time"));
+        assign(createClaim(), "officer1");
+        getJson(OFFICERS).andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("DOWNSTREAM_UNAVAILABLE"))
+                .andExpect(jsonPath("$.officers").doesNotExist());
+        // the summary reads only claims, so it does not depend on the User Service
+        getJson(SUMMARY).andExpect(status().isOk());
+
+        // doThrow, not when(): the stub above already throws, so calling it inside when(...) would throw here
+        doThrow(ApiException.badGateway("DOWNSTREAM_ERROR", "User Service answered with HTTP 403")).when(users).activeClaimsOfficers();
+        getJson(OFFICERS).andExpect(status().isBadGateway()).andExpect(jsonPath("$.code").value("DOWNSTREAM_ERROR"));
     }
 
     @Test

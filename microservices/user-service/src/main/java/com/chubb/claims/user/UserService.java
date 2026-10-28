@@ -10,6 +10,7 @@ import com.chubb.claims.user.UserDtos.PageResponse;
 import com.chubb.claims.user.UserDtos.UserResponse;
 import com.chubb.claims.user.UserDtos.UserView;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Locale;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
@@ -132,6 +133,16 @@ public class UserService {
     @Transactional(readOnly = true)
     public UserView view(String username) {
         return UserView.from(users.findByUsername(username).orElseThrow(() -> notFound(username)));
+    }
+
+    /**
+     * For other services (through the SERVICE-only internal route): everyone with this role and active flag, by username.
+     * Not paged: it is meant for staff roles (the Claim Service's officer report asks for the active claims officers), which
+     * are few; do not use it for CLAIMANT, which has no bound.
+     */
+    @Transactional(readOnly = true)
+    public List<UserView> viewAll(Role role, boolean active) {
+        return users.findByRoleAndActiveOrderByUsername(role, active).stream().map(UserView::from).toList();
     }
 
     private static void requireAssignable(Role role) {

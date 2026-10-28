@@ -77,7 +77,7 @@ Worth it: different scaling or ownership per area, isolating the read-heavy repo
 | Claimants can list and correct their own claims (while `SUBMITTED`), with an edit history | No edit; or edit at any time | "Create, retrieve, list and update claims"; editing after an officer started would change what they reviewed |
 | Officers see only unassigned claims and their own (`ClaimVisibility`) | Every officer sees everything | Owner's rule ("only claims they are authorised to handle"); one shared class so the services cannot drift |
 | Officer identity comes from the token; an administrator acting for an officer must name one | Keep trusting officer IDs in bodies | Closes the "one officer can act as another" gap; the body field is optional for officers so contracts still work |
-| Managers can assign; officers only to themselves; the assignee must be an active claims officer (User Service lookup) | Accept any text as the officer ID | Owner's rule; costs the Claim to User call and a 503 when it is down |
+| Managers can assign; officers only to themselves; the assignee must be an active claims officer (User Service lookup) | Accept any text as the officer ID | Owner's rule; costs the Claim to User call and a 503 when it is down (the officer report uses the same call to list officers who have no claims, section 6) |
 | `active` flag on users | Delete users | Keeps history and names intact; stops new logins only (no revocation) |
 | No default JWT secret; `JWT_SECRET` required; `start-all.ps1` generates one per run | Keep the committed default | A secret in a file in a synced repository is public; costs one setting per IDE run configuration |
 | Database credentials only from `*_DB_*` environment variables; Claim port back to 8181 | Leave the owner's hard-coded URL, user and password and port 8787 | Owner approved moving secrets out of source control; port 8181 is the documented default every other service points at |
@@ -179,6 +179,18 @@ Limitations:
 - **Point in time.** Calculated on request from current data; no history or trend.
 
 `GET /api/v1/management/officers` reports open claims by current assignee and status (an `APPROVED` claim is open work until it is settled), and decisions by the deciding officer: `decidedCount`, `approvedCount` (everything the officer approved, still `APPROVED` or since `SETTLED`), `settledCount`, `rejectedCount` and the approved amount per currency. It has no time-based metric because the data model has no "review started" timestamp, and no reassignment history.
+
+**Who is listed (a defect found and fixed 2026-10-28).** The report was built from the `claims` table alone (two `GROUP BY` queries over `assigned_officer_id` and `decided_by_officer_id`), so an officer with no claim yet produced no row and was missing, although they were an active `CLAIMS_OFFICER` in the User Service: a manager looking for an officer to give work to could not see the one with the least. The fix keeps the SQL and changes where the officer list comes from:
+
+| Decision | Alternative | Why |
+|---|---|---|
+| The Claim Service asks the User Service for the active claims officers (`GET /internal/v1/users?role=CLAIMS_OFFICER&active=true`, a new SERVICE-only internal route) and lists each, with zeros if they have no claims | Join the `users` table in a query; copy officers into the Claim database; let the manager's client merge two lists | Each service owns its database, so the Claim Service cannot read `users` (a join is not possible, and a copy would be a second source of truth that drifts). The Claim to User call already exists for assignment, so the dependency graph (Assessment to Claim, Claim to User) does not change. A client-side merge would put a business rule on every caller |
+| The report is the **union** of the active officers and anyone who appears on a claim | Only the active officers | An officer switched off after being given work still holds those claims; hiding them would hide open liability from the manager. They leave the report when they hold none |
+| A User Service outage makes the report **503** (502 if it rejects the token), never a shorter report | Fall back to the claims-only list | A silent fallback reproduces the exact defect, without anyone being told. The summary report reads only claims and is unaffected. Costs: this report now depends on the User Service being up |
+| The User Service is asked **before** the read-only transaction opens (`TransactionTemplate`), not inside it | Keep `@Transactional` on the whole method | No database transaction may stay open across a call to another service (CLAUDE.md section 2); the two claims queries still run in one read-only transaction, so they come from one snapshot |
+| The list is not paged, and `users` has no index on `role` | Paging and an index | The route is for staff roles (a handful of rows); it must not be used for `CLAIMANT`, which has no bound. An index would be added with a measured need |
+
+The two reads are separate calls to separate services, so an officer created or switched off during the request may or may not be in the answer (best effort, like every cross-service read). Not run on PostgreSQL: the new query is a derived Spring Data query on `role` and `active`; it ran on H2 only.
 
 ## 7. APAC markets
 

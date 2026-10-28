@@ -23,6 +23,7 @@ class UserClientTest {
 
     private HttpServer server;
     private final AtomicReference<String> requestedPath = new AtomicReference<>();
+    private final AtomicReference<String> requestedQuery = new AtomicReference<>();
     private volatile int status;
     private volatile String body;
 
@@ -31,6 +32,7 @@ class UserClientTest {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/", exchange -> {
             requestedPath.set(exchange.getRequestURI().getPath());
+            requestedQuery.set(exchange.getRequestURI().getRawQuery());
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, bytes.length);
@@ -104,6 +106,49 @@ class UserClientTest {
         int closedPort = server.getAddress().getPort();
         server.stop(0);
         assertThatThrownBy(() -> client("http://127.0.0.1:" + closedPort).isActiveClaimsOfficer("officer.a"))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                    assertThat(e.getCode()).isEqualTo("DOWNSTREAM_UNAVAILABLE");
+                });
+    }
+
+    // ---- the list of active claims officers (the officer report) ----
+
+    @Test
+    void theActiveOfficersAreAskedForByRoleAndActiveFlagAndReturnedByUsername() {
+        answer(200, "[{\"username\":\"officer1\",\"role\":\"CLAIMS_OFFICER\",\"active\":true,\"somethingNew\":1},"
+                + "{\"username\":\"officer2\",\"role\":\"CLAIMS_OFFICER\",\"active\":true}]");
+        assertThat(client().activeClaimsOfficers()).containsExactly("officer1", "officer2");
+        assertThat(requestedPath.get()).isEqualTo("/internal/v1/users");
+        assertThat(requestedQuery.get()).isEqualTo("role=CLAIMS_OFFICER&active=true");
+    }
+
+    @Test
+    void anEmptyListIsNoOfficersAndAnythingThatIsNotAnActiveOfficerIsLeftOutEvenIfTheServiceSentIt() {
+        answer(200, "[]");
+        assertThat(client().activeClaimsOfficers()).isEmpty();
+        answer(200, "[{\"username\":\"off.a\",\"role\":\"CLAIMS_OFFICER\",\"active\":false},"
+                + "{\"username\":\"mgr.a\",\"role\":\"MANAGER\",\"active\":true},"
+                + "{\"username\":\"new.a\",\"role\":\"SOMETHING_NEW\",\"active\":true},"
+                + "{\"username\":\"off.b\",\"role\":\"CLAIMS_OFFICER\",\"active\":true}]");
+        assertThat(client().activeClaimsOfficers()).containsExactly("off.b");
+    }
+
+    @Test
+    void theOfficerListIsNeverGuessedWhenTheUserServiceFails() {
+        int closedPort = server.getAddress().getPort();
+        answer(500, "{\"status\":500}");
+        assertThatThrownBy(() -> client().activeClaimsOfficers()).isInstanceOfSatisfying(ApiException.class,
+                e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY));
+        // a 403 means the shared secret is wrong; a body that is not a list is a response nobody can read
+        answer(403, "{\"status\":403,\"code\":\"FORBIDDEN\",\"message\":\"m\"}");
+        assertThatThrownBy(() -> client().activeClaimsOfficers()).isInstanceOfSatisfying(ApiException.class,
+                e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY));
+        answer(200, "{\"not\":\"a list\"}");
+        assertThatThrownBy(() -> client().activeClaimsOfficers()).isInstanceOfSatisfying(ApiException.class,
+                e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY));
+        server.stop(0);
+        assertThatThrownBy(() -> client("http://127.0.0.1:" + closedPort).activeClaimsOfficers())
                 .isInstanceOfSatisfying(ApiException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
                     assertThat(e.getCode()).isEqualTo("DOWNSTREAM_UNAVAILABLE");

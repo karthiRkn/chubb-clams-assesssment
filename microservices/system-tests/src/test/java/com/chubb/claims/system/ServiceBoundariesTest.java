@@ -192,7 +192,7 @@ class ServiceBoundariesTest {
                 "/api/v1/claims/{claimId}/information");
         assertThat(documentedPaths(system.userUrl)).containsExactlyInAnyOrder("/api/v1/auth/register", "/api/v1/auth/login",
                 "/api/v1/users", "/api/v1/users/me", "/api/v1/users/{username}", "/api/v1/users/{username}/role",
-                "/api/v1/users/{username}/active", "/internal/v1/users/{username}");
+                "/api/v1/users/{username}/active", "/internal/v1/users", "/internal/v1/users/{username}");
     }
 
     @Test
