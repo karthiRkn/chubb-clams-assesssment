@@ -12,3 +12,23 @@ application-secret.properties
 
 # PID files written by microservices/scripts/start-all.ps1
 *.pid
+
+# Frontend (Angular). frontend/.gitignore adds the Angular-specific rules; these keep build output out
+# of the parent repository even if that file changes.
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/coverage/
+
+# Frontend IDE
+frontend/.idea/
+frontend/.vscode/
+
+# Frontend logs
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Frontend OS files
+frontend/.DS_Store
+frontend/Thumbs.db

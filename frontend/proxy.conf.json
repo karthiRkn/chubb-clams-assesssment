@@ -1,0 +1,23 @@
+{
+  "/svc/user": {
+    "target": "http://localhost:8185",
+    "secure": false,
+    "changeOrigin": true,
+    "pathRewrite": { "^/svc/user": "" },
+    "logLevel": "warn"
+  },
+  "/svc/claim": {
+    "target": "http://localhost:8181",
+    "secure": false,
+    "changeOrigin": true,
+    "pathRewrite": { "^/svc/claim": "" },
+    "logLevel": "warn"
+  },
+  "/svc/assessment": {
+    "target": "http://localhost:8182",
+    "secure": false,
+    "changeOrigin": true,
+    "pathRewrite": { "^/svc/assessment": "" },
+    "logLevel": "warn"
+  }
+}

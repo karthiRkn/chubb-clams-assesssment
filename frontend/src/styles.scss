@@ -1,0 +1,282 @@
+@use '@angular/material' as mat;
+
+// ---- Theme (Material 3). Palettes are system tokens (--mat-sys-*), so every component and every page below can use them.
+html {
+  color-scheme: light;
+  @include mat.theme(
+    (
+      color: (
+        primary: mat.$azure-palette,
+        tertiary: mat.$blue-palette,
+        theme-type: light,
+      ),
+      typography: Roboto,
+      density: 0,
+    )
+  );
+}
+
+:root {
+  --app-radius: 12px;
+  --app-border: var(--mat-sys-outline-variant);
+  --app-muted: var(--mat-sys-on-surface-variant);
+  --app-page-max: 1280px;
+
+  // Status colours (claim lifecycle). Foreground/background pairs are chosen for >= 4.5:1 contrast.
+  --status-submitted-bg: #e3f2fd;
+  --status-submitted-fg: #0d47a1;
+  --status-review-bg: #e8eaf6;
+  --status-review-fg: #283593;
+  --status-info-bg: #fff3e0;
+  --status-info-fg: #8a3b00;
+  --status-approved-bg: #e8f5e9;
+  --status-approved-fg: #1b5e20;
+  --status-rejected-bg: #ffebee;
+  --status-rejected-fg: #b71c1c;
+  --status-settled-bg: #e0f2f1;
+  --status-settled-fg: #004d40;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--mat-sys-surface);
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--mat-sys-primary);
+}
+
+// ---- Page layout helpers used by every feature page
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: var(--app-page-max);
+  margin: 0 auto;
+  padding: 24px;
+
+  @media (max-width: 599px) {
+    gap: 16px;
+    padding: 16px;
+  }
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 16px;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+
+  @media (max-width: 959px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+
+  .full {
+    grid-column: 1 / -1;
+  }
+
+  @media (max-width: 599px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.panel {
+  background: var(--mat-sys-surface-container-lowest);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  padding: 20px;
+
+  @media (max-width: 599px) {
+    padding: 16px;
+  }
+
+  // Every panel heading looks the same, also when it sits in a header row next to a button (".panel-head").
+  h2,
+  .panel-title {
+    font: var(--mat-sys-title-medium);
+  }
+
+  // Only a heading that is a direct child gets the gap below; a header row manages its own spacing.
+  > h2,
+  .panel-title {
+    margin-bottom: 12px;
+  }
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.actions-end {
+  @extend .actions;
+  justify-content: flex-end;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.muted {
+  color: var(--app-muted);
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  background: var(--mat-sys-surface-container-lowest);
+
+  table {
+    width: 100%;
+    background: transparent;
+  }
+
+  .mat-mdc-row:hover {
+    background: var(--mat-sys-surface-container-low);
+  }
+
+  .clickable-row {
+    cursor: pointer;
+  }
+}
+
+// Columns that are dropped on narrow screens so tables stay readable without sideways scrolling.
+@media (max-width: 959px) {
+  .hide-md {
+    display: none;
+  }
+}
+
+@media (max-width: 599px) {
+  .hide-sm {
+    display: none;
+  }
+}
+
+// ---- Sign-in / register pages (outside the app shell)
+.auth-page {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 24px 16px;
+  background: linear-gradient(160deg, var(--mat-sys-primary-container), var(--mat-sys-surface) 60%);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 32px;
+  border: 1px solid var(--app-border);
+  border-radius: 16px;
+  background: var(--mat-sys-surface-container-lowest);
+  box-shadow: var(--mat-sys-level2);
+
+  @media (max-width: 599px) {
+    padding: 24px 20px;
+  }
+}
+
+// ---- Buttons
+.mat-mdc-unelevated-button.btn-warn {
+  --mat-button-filled-container-color: var(--mat-sys-error);
+  --mat-button-filled-label-text-color: var(--mat-sys-on-error);
+}
+
+.mat-mdc-button.btn-warn {
+  --mat-button-text-label-text-color: var(--mat-sys-error);
+}
+
+.mat-mdc-outlined-button.btn-warn {
+  --mat-button-outlined-label-text-color: var(--mat-sys-error);
+  --mat-button-outlined-outline-color: var(--mat-sys-error);
+}
+
+// ---- Toast notifications (MatSnackBar panelClass)
+.toast {
+  --mat-snack-bar-button-color: #fff;
+  --mat-snack-bar-supporting-text-color: #fff;
+}
+
+.toast-success {
+  --mat-snack-bar-container-color: #1b5e20;
+}
+
+.toast-error {
+  --mat-snack-bar-container-color: #b71c1c;
+}
+
+.toast-warning {
+  --mat-snack-bar-container-color: #8a3b00;
+}
+
+.toast-info {
+  --mat-snack-bar-container-color: #0d47a1;
+}
+
+// ---- Forms
+// An outline label sits on the field's top border, so a hint or error above it needs some air or the two collide.
+.mat-mdc-form-field {
+  margin-bottom: 8px;
+}
+
+// ---- Misc
+// An icon next to wrapping text (banners, alerts, notices) must keep its size instead of being squeezed by flexbox.
+mat-icon {
+  flex-shrink: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--mat-sys-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
